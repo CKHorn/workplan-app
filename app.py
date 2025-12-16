@@ -5,41 +5,68 @@ import pandas as pd
 # =============================
 # Helpers
 # =============================
-def money(x):
+def money(x: float) -> str:
     return f"${x:,.0f}"
 
-def pct(x):
+def pct(x: float) -> float:
     return x / 100.0
 
-def parse_currency(text):
+def parse_currency(text: str) -> float:
+    """Parse a currency-like string (commas/$ allowed) into a float dollars value (no decimals)."""
     digits = re.sub(r"[^\d]", "", text or "")
     if digits == "":
-        raise ValueError
+        raise ValueError("No digits found")
     return float(digits)
 
-def normalize(d):
-    total = sum(max(v, 0) for v in d.values())
+def normalize(d: dict) -> dict:
+    """Normalize a dict of weights to sum to 1.0 (ignoring negatives)."""
+    total = sum(max(v, 0.0) for v in d.values())
     if total <= 0:
         n = len(d)
-        return {k: 1 / n for k in d}
-    return {k: max(v, 0) / total for k, v in d.items()}
+        return {k: 1.0 / n for k in d}
+    return {k: max(v, 0.0) / total for k, v in d.items()}
+
+def build_plan(rows, target_fee: float, rate: float, phase_split: dict) -> pd.DataFrame:
+    """
+    rows: list of tuples (Phase, Task, BaseHours)
+    Allocate target_fee into phases via phase_split; distribute phase hours across tasks proportional to BaseHours.
+    """
+    phase_split_n = normalize(phase_split)
+    df = pd.DataFrame(rows, columns=["Phase", "Task", "Base"])
+
+    out = []
+    for phase, frac in phase_split_n.items():
+        phase_fee = target_fee * frac
+        phase_hours = (phase_fee / rate) if rate > 0 else 0.0
+
+        p = df[df["Phase"] == phase].copy()
+        if p.empty:
+            # bucket row if a phase has no tasks (keeps phase fee represented)
+            p = pd.DataFrame([{"Phase": phase, "Task": f"{phase} - General", "Base": 1.0}])
+
+        base_sum = float(p["Base"].sum())
+        if base_sum <= 0:
+            p["Hours"] = 0.0
+        else:
+            p["Hours"] = p["Base"] / base_sum * phase_hours
+
+        p["Fee ($)"] = p["Hours"] * rate
+        out.append(p[["Phase", "Task", "Hours", "Fee ($)"]])
+
+    out_df = pd.concat(out, ignore_index=True)
+    out_df["Hours"] = out_df["Hours"].round(1)
+    out_df["Fee ($)"] = out_df["Fee ($)"].round(0)
+    return out_df
 
 # =============================
-# Fixed discipline splits
-# =============================
-ELECTRICAL_PCT = 28.0
-PLUMBING_FIRE_PCT = 24.0
-FIRE_CARVEOUT = 10.0
-PLUMBING_CORE = 90.0
-
-# =============================
-# Electrical task baseline
+# Task lists (restored)
 # =============================
 ELECTRICAL = [
     # SD
-    ("SD", "PM: kickoff / coordination", 10),
+    ("SD", "PM: kickoff meetings / coordination", 10),
     ("SD", "PM: schedule tracking", 6),
-    ("SD", "PM: client coordination", 8),
+    ("SD", "PM: client coordination (SD)", 8),
+    ("SD", "PM: internal reviews / QA", 6),
     ("SD", "Utility research & service availability", 10),
     ("SD", "Preliminary load calculations", 14),
     ("SD", "Service & distribution concepts", 16),
@@ -53,186 +80,267 @@ ELECTRICAL = [
     ("SD", "SD review & revisions", 10),
 
     # DD
-    ("DD", "PM: coordination & reviews", 22),
+    ("DD", "PM: client coordination (DD)", 8),
+    ("DD", "PM: discipline coordination (DD)", 8),
+    ("DD", "PM: internal design reviews (DD)", 6),
     ("DD", "Updated load calculations", 14),
     ("DD", "Power plans – typical units", 24),
     ("DD", "Power plans – common areas", 22),
     ("DD", "Lighting layouts & controls", 22),
     ("DD", "Equipment room layouts", 12),
     ("DD", "Metering strategy", 10),
-    ("DD", "Panel schedules (DD)", 14),
+    ("DD", "Panel schedules (DD level)", 14),
     ("DD", "Riser & one-line refinement", 14),
+    ("DD", "Arch coordination", 16),
+    ("DD", "Mechanical coordination", 12),
     ("DD", "Code compliance review", 8),
     ("DD", "DD review & revisions", 14),
 
-    # CD
-    ("CD", "PM / QAQC", 16),
+    # CD (+ permitting rolled into CD)
+    ("CD", "PM: issue management / meetings (CD)", 10),
+    ("CD", "PM: fee & scope tracking (CD)", 6),
     ("CD", "Final unit power plans", 36),
     ("CD", "Final common area power plans", 30),
     ("CD", "Lighting plans & controls", 32),
     ("CD", "Emergency / life safety systems", 20),
     ("CD", "Final risers & one-lines", 26),
+    ("CD", "Final load calculations", 12),
     ("CD", "Panel schedules (final)", 28),
     ("CD", "Details & diagrams", 18),
+    ("CD", "Grounding & bonding", 10),
     ("CD", "Specs & general notes", 14),
-    ("CD", "Permit set & AHJ responses", 42),
+    ("CD", "Discipline coordination", 20),
+    ("CD", "Internal QA/QC", 18),
+    ("CD", "Permit set issuance", 12),
+    ("CD", "Permit support", 6),
+    ("CD", "Plan check review", 10),
+    ("CD", "Comment responses", 14),
+    ("CD", "Drawing revisions (permit comments)", 12),
+    ("CD", "AHJ coordination", 4),
 
     # Bidding
-    ("Bidding", "Bid support / addenda / VE", 46),
+    ("Bidding", "Contractor RFIs", 16),
+    ("Bidding", "Addenda", 14),
+    ("Bidding", "VE reviews", 8),
+    ("Bidding", "Bid evaluation support", 8),
 
     # CA
-    ("CA", "PM / coordination", 12),
-    ("CA", "Submittals / RFIs / site visits", 104),
+    ("CA", "PM: CA coordination & reporting", 12),
+    ("CA", "Submittal reviews", 34),
+    ("CA", "Shop drawings", 20),
+    ("CA", "RFIs", 28),
+    ("CA", "Site visits", 22),
+    ("CA", "Change order reviews", 12),
+    ("CA", "Punchlist support", 12),
+    ("CA", "As-built review", 10),
 ]
 
-# =============================
-# Plumbing baseline (units + podium logic)
-# =============================
-PLUMBING = [
-    ("SD", "SAN/VENT – Initial sizing", 3),
-    ("SD", "SAN/VENT – Civil coordination", 9),
-    ("SD", "SAN/VENT – Luxury amenity", 9),
-    ("SD", "SAN/VENT – Luxury units", "lux"),
-    ("SD", "SAN/VENT – Typical units", "typ"),
-    ("SD", "STORM – Main roof sizing", 18),
-    ("SD", "STORM – Podium sizing", "podium"),
-    ("SD", "Domestic – Initial sizing", 4),
+# Plumbing tasks with unit-driven items + podium toggle items
+PLUMBING_BASE = [
+    # SD
+    ("SD", "SAN/VENT - Initial Sizing", 3, None),
+    ("SD", "SAN/VENT - Civil Coordination", 9, None),
+    ("SD", "SAN/VENT - Luxury Amenity", 9, None),
+    ("SD", "SAN/VENT - Luxury Units (4 hr/unit)", 32, "lux_units_4hr"),
+    ("SD", "SAN/VENT - Typical Units (4 hr/unit)", 68, "typ_units_4hr"),
+    ("SD", "STORM - Main Roof Sizing", 18, None),
+    ("SD", "STORM - Podium Sizing", 9, "podium_only"),
+    ("SD", "Domestic - Initial Sizing", 4, None),
+    ("SD", "Domestic - Pump Sizing", 4, None),
 
-    ("DD", "SAN/VENT – Equipment sizing", 18),
-    ("DD", "STORM – Riser coordination", 18),
-    ("DD", "STORM – Podium", "podium"),
-    ("DD", "Domestic – Distribution layouts", "dom"),
+    # DD
+    ("DD", "SAN/VENT - Potential Equipment Sizing", 18, None),
+    ("DD", "STORM - Riser Coordination Luxury", 5, None),
+    ("DD", "STORM - Offsets", 4, None),
+    ("DD", "STORM - Riser Coordination Typical", 5, None),
+    ("DD", "STORM - Riser Offsets", 4, None),
+    ("DD", "STORM - Podium", 14, "podium_only"),
+    ("DD", "Domestic - Ground Lvl distribution", 10, None),
+    ("DD", "Domestic - Amenity distribution", 10, None),
+    ("DD", "Domestic - Top Level distribution", 10, None),
+    ("DD", "Domestic - Unit Distribution (2 hr/unit)", 50, "dom_units_2hr"),
 
-    ("CD", "SAN/VENT – Collections & isometrics", 130),
-    ("CD", "STORM – Collections & isometrics", 45),
-    ("CD", "Garage drainage", 53),
-    ("CD", "Misc / details / schedules", 18),
+    # CD
+    ("CD", "SAN/VENT - In building Collections", 54, None),
+    ("CD", "SAN/VENT - Ground Level Collections", 9, None),
+    ("CD", "SAN/VENT - Underground Collections", 18, None),
+    ("CD", "SAN/VENT - Isometrics", 40, None),
+    ("CD", "SAN/VENT - Derm Grease", 9, None),
+    ("CD", "STORM - Ground Level Collections", 9, None),
+    ("CD", "STORM - Underground Collections", 18, None),
+    ("CD", "STORM - Storm Isometrics", 18, None),
+    ("CD", "Domestic - Domestic Isometrics", 18, None),
+    ("CD", "Garage Drainage - Collections", 27, None),
+    ("CD", "Garage Drainage - Equipment Sizing", 4, None),
+    ("CD", "Garage Drainage - Civil Coordination", 4, None),
+    ("CD", "Garage Drainage - Isometric", 18, None),
+    ("CD", "Misc/Details/Schedules", 18, None),
 
-    ("Bidding", "Bidding support (Plumbing)", 10),
-    ("CA", "Submittals / RFIs / site support", 60),
+    # Bidding / CA placeholders
+    ("Bidding", "Bidding support (Plumbing)", 10, None),
+    ("CA", "Submittals / RFIs / site support (Plumbing)", 60, None),
 ]
 
-# =============================
-# Phase scaling engine
-# =============================
-def build_plan(rows, target_fee, rate, phase_split):
-    phase_split = normalize(phase_split)
-    df = pd.DataFrame(rows, columns=["Phase", "Task", "Base"])
-    out = []
+def build_plumbing_rows(podium: bool, lux_units: int, typ_units: int, dom_units: int):
+    rows = []
+    for phase, task, hrs, tag in PLUMBING_BASE:
+        if tag == "podium_only" and not podium:
+            continue
 
-    for phase, frac in phase_split.items():
-        phase_fee = target_fee * frac
-        phase_hours = phase_fee / rate if rate else 0
-        p = df[df.Phase == phase].copy()
-        base_sum = p.Base.sum()
-        p["Hours"] = p.Base / base_sum * phase_hours
-        p["Fee ($)"] = p.Hours * rate
-        out.append(p[["Phase", "Task", "Hours", "Fee ($)"]])
+        base_hrs = float(hrs)
+        if tag == "lux_units_4hr":
+            base_hrs = float(lux_units) * 4.0
+        elif tag == "typ_units_4hr":
+            base_hrs = float(typ_units) * 4.0
+        elif tag == "dom_units_2hr":
+            base_hrs = float(dom_units) * 2.0
 
-    out = pd.concat(out)
-    out["Hours"] = out["Hours"].round(1)
-    out["Fee ($)"] = out["Fee ($)"].round(0)
-    return out
+        rows.append((phase, task, base_hrs))
+    return rows
 
 # =============================
-# APP
+# App
 # =============================
-st.set_page_config(layout="wide")
+st.set_page_config(page_title="MEP Work Plan Generator", layout="wide")
 st.title("Electrical + Plumbing / Fire Work Plan Generator — Hours & Fees")
 
-# ---------- Sidebar ----------
+# ---------- Sidebar: global inputs only ----------
 with st.sidebar:
     st.header("Construction and % Design Fee Inputs")
-    cost = parse_currency(st.text_input("Construction Cost ($)", "10,000,000"))
-    arch_pct = st.number_input("Architectural Fee (%)", value=3.5)
-    mep_pct = st.number_input("MEP Fee (%)", value=15.0)
+
+    cost_raw = st.text_input("Construction Cost ($)", "10,000,000")
+    try:
+        construction_cost = parse_currency(cost_raw)
+    except ValueError:
+        construction_cost = 0.0
+        st.error("Construction Cost must contain digits (commas and $ are ok).")
+
+    arch_fee_pct = st.number_input("Architectural Fee (%)", min_value=0.0, value=3.5, step=0.1, format="%.2f")
+    mep_fee_pct = st.number_input("Standard MEP Fee (%)", min_value=0.0, value=15.0, step=0.5, format="%.2f")
+
+    st.divider()
+    st.header("Discipline % of MEP Fee")
+    electrical_pct = st.number_input("Electrical (%)", min_value=0.0, value=28.0, step=0.5, format="%.1f")
+    plumbing_fire_pct = st.number_input("Plumbing / Fire (%)", min_value=0.0, value=24.0, step=0.5, format="%.1f")
 
     st.divider()
     st.header("Rate Inputs")
-    raw = st.number_input("Base Raw Rate ($/hr)", value=56.0)
-    mult = st.number_input("Multiplier", value=3.6)
-    rate = raw * mult
+    base_raw_rate = st.number_input("Base Raw Rate ($/hr)", min_value=0.0, value=56.0, step=1.0)
+    multiplier = st.number_input("Multiplier", min_value=0.0, value=3.6, step=0.1, format="%.2f")
+    billing_rate = base_raw_rate * multiplier
 
-# ---------- Phase Split ----------
+# ---------- Phase split row (main page) ----------
 st.subheader("Design Phase Fee % Split")
-c = st.columns(5)
-phase_split = {
-    "SD": c[0].number_input("SD (%)", value=12.0),
-    "DD": c[1].number_input("DD (%)", value=40.0),
-    "CD": c[2].number_input("CD (%)", value=28.0),
-    "Bidding": c[3].number_input("Bidding (%)", value=1.5),
-    "CA": c[4].number_input("CA (%)", value=18.5),
-}
+c1, c2, c3, c4, c5 = st.columns(5)
 
-# ---------- Fees ----------
-arch_fee = cost * pct(arch_pct)
-mep_fee = arch_fee * pct(mep_pct)
+sd_pct = c1.number_input("SD (%)", min_value=0.0, value=12.0, step=0.5, format="%.1f")
+dd_pct = c2.number_input("DD (%)", min_value=0.0, value=40.0, step=0.5, format="%.1f")
+cd_pct = c3.number_input("CD (%)", min_value=0.0, value=28.0, step=0.5, format="%.1f")
+bid_pct = c4.number_input("Bidding (%)", min_value=0.0, value=1.5, step=0.1, format="%.1f")
+ca_pct = c5.number_input("CA (%)", min_value=0.0, value=18.5, step=0.5, format="%.1f")
 
-elec_fee = mep_fee * pct(ELECTRICAL_PCT)
-plumb_fire_fee = mep_fee * pct(PLUMBING_FIRE_PCT)
-fire_fee = plumb_fire_fee * pct(FIRE_CARVEOUT)
-plumb_fee = plumb_fire_fee * pct(PLUMBING_CORE)
+phase_split = {"SD": sd_pct, "DD": dd_pct, "CD": cd_pct, "Bidding": bid_pct, "CA": ca_pct}
+phase_split_n = normalize(phase_split)
+st.caption("Phase split auto-normalizes to 100% if your entries don’t add to 100.")
 
-# ---------- Summary ----------
+# ---------- Fee cascade ----------
+arch_fee = construction_cost * pct(arch_fee_pct)
+mep_fee = arch_fee * pct(mep_fee_pct)
+
+electrical_target_fee = mep_fee * pct(electrical_pct)
+plumbing_fire_target_fee = mep_fee * pct(plumbing_fire_pct)
+
+fire_fee = plumbing_fire_target_fee * pct(10.0)
+plumbing_fee = plumbing_fire_target_fee - fire_fee  # 90%
+
+# ---------- Summary (NO st.metric) ----------
 st.subheader("Design Fee Summary")
-s = st.columns(5)
-s[0].markdown("**Construction Cost**"); s[0].write(money(cost))
-s[1].markdown("**Architectural Fee**"); s[1].write(money(arch_fee))
-s[2].markdown("**MEP Fee**"); s[2].write(money(mep_fee))
-s[3].markdown("**Electrical Fee (28%)**"); s[3].write(money(elec_fee))
-s[4].markdown("**Plumbing / Fire Fee (24%)**"); s[4].write(money(plumb_fire_fee))
+s1, s2, s3, s4, s5 = st.columns(5)
+with s1:
+    st.markdown("**Construction Cost**"); st.write(money(construction_cost))
+with s2:
+    st.markdown("**Architectural Fee**"); st.write(money(arch_fee))
+with s3:
+    st.markdown("**MEP Fee**"); st.write(money(mep_fee))
+with s4:
+    st.markdown(f"**Electrical Fee ({electrical_pct:.1f}% of MEP)**"); st.write(money(electrical_target_fee))
+with s5:
+    st.markdown(f"**Plumbing / Fire Fee ({plumbing_fire_pct:.1f}% of MEP)**"); st.write(money(plumbing_fire_target_fee))
 
-st.write(f"**Billing Rate Used:** {money(rate)}/hr")
+st.write(f"**Billing Rate Used:** {money(billing_rate)}/hr (Base {money(base_raw_rate)}/hr × {multiplier:.2f})")
 
-# ---------- Build Electrical ----------
-e_rows = [(p, t, h) for p, t, h in ELECTRICAL]
-e_df = build_plan(e_rows, elec_fee, rate, phase_split)
+# ---------- Build Electrical plan ----------
+e_df = build_plan(ELECTRICAL, electrical_target_fee, billing_rate, phase_split)
 
-# ---------- Plumbing Inputs ----------
-right, left = st.columns(2)
-with right:
-    st.subheader("Plumbing / Fire Inputs")
-    podium = st.checkbox("Include Podium", True)
-    lux = st.number_input("Luxury units (×4 hr)", 0, 100, 8)
-    typ = st.number_input("Typical units (×4 hr)", 0, 200, 12)
-    dom = st.number_input("Domestic units (×2 hr)", 0, 300, 25)
-
-# ---------- Build Plumbing ----------
-p_rows = []
-for phase, task, base in PLUMBING:
-    if base == "lux":
-        p_rows.append((phase, task, lux * 4))
-    elif base == "typ":
-        p_rows.append((phase, task, typ * 4))
-    elif base == "dom":
-        p_rows.append((phase, task, dom * 2))
-    elif base == "podium":
-        if podium:
-            p_rows.append((phase, task, 12))
-    else:
-        p_rows.append((phase, task, base))
-
-p_df = build_plan(p_rows, plumb_fee, rate, phase_split)
-
-# ---------- Fire rows ----------
-fire_rows = [(p, "Fire Protection", 1) for p in phase_split]
-f_df = build_plan(fire_rows, fire_fee, rate, phase_split)
-
-pf_df = pd.concat([p_df, f_df])
-
-# ---------- Display ----------
+# ---------- Layout columns ----------
 left, right = st.columns(2)
 
+# ---------- Electrical display ----------
 with left:
     st.subheader("Electrical")
-    for ph in phase_split:
-        d = e_df[e_df.Phase == ph]
-        with st.expander(f"{ph} — {d.Hours.sum():.1f} hrs | {money(d['Fee ($)'].sum())}"):
-            st.dataframe(d[["Task", "Hours", "Fee ($)"]], hide_index=True)
 
+    for ph in ["SD", "DD", "CD", "Bidding", "CA"]:
+        d = e_df[e_df["Phase"] == ph].copy()
+        if d.empty:
+            continue
+        hrs = float(d["Hours"].sum())
+        fee = float(d["Fee ($)"].sum())
+        with st.expander(f"{ph} — {hrs:,.1f} hrs | {money(fee)}", expanded=False):
+            show = d[["Task", "Hours", "Fee ($)"]].copy()
+            show["Fee ($)"] = show["Fee ($)"].apply(lambda v: money(float(v)))
+            st.dataframe(show, use_container_width=True, hide_index=True)
+
+    st.divider()
+    e_total_hrs = float(e_df["Hours"].sum())
+    e_total_fee = float(e_df["Fee ($)"].sum())
+    st.markdown(f"### ELECTRICAL TOTAL\n**{e_total_hrs:,.1f} hrs** | **{money(e_total_fee)}**")
+
+# ---------- Plumbing/Fire display + compact inputs ----------
 with right:
     st.subheader("Plumbing / Fire")
-    for ph in phase_split:
-        d = pf_df[pf_df.Phase == ph]
-        with st.expander(f"{ph} — {d.Hours.sum():.1f} hrs | {money(d['Fee ($)'].sum())}"):
-            st.dataframe(d[["Task", "Hours", "Fee ($)"]], hide_index=True)
+
+    # Compact inputs directly under section header
+    st.caption("Inputs")
+    pi1, pi2, pi3, pi4 = st.columns([1.1, 1, 1, 1])
+
+    with pi1:
+        podium = st.checkbox("Include Podium", value=True)
+    with pi2:
+        st.caption("Luxury units")
+        lux_units = st.number_input("", min_value=0, value=8, step=1, key="lux_units", label_visibility="collapsed")
+    with pi3:
+        st.caption("Typical units")
+        typ_units = st.number_input("", min_value=0, value=12, step=1, key="typ_units", label_visibility="collapsed")
+    with pi4:
+        st.caption("Domestic units")
+        dom_units = st.number_input("", min_value=0, value=25, step=1, key="dom_units", label_visibility="collapsed")
+
+    # Build plumbing + fire plans
+    p_rows = build_plumbing_rows(podium=podium, lux_units=int(lux_units), typ_units=int(typ_units), dom_units=int(dom_units))
+    p_df = build_plan(p_rows, plumbing_fee, billing_rate, phase_split)
+
+    fire_rows = [(ph, "Fire Protection", 1.0) for ph in phase_split.keys()]
+    f_df = build_plan(fire_rows, fire_fee, billing_rate, phase_split)
+
+    pf_df = pd.concat([p_df, f_df], ignore_index=True)
+
+    for ph in ["SD", "DD", "CD", "Bidding", "CA"]:
+        d = pf_df[pf_df["Phase"] == ph].copy()
+        if d.empty:
+            continue
+        hrs = float(d["Hours"].sum())
+        fee = float(d["Fee ($)"].sum())
+        with st.expander(f"{ph} — {hrs:,.1f} hrs | {money(fee)}", expanded=False):
+            show = d[["Task", "Hours", "Fee ($)"]].copy()
+            show["Fee ($)"] = show["Fee ($)"].apply(lambda v: money(float(v)))
+            st.dataframe(show, use_container_width=True, hide_index=True)
+
+    st.divider()
+    pf_total_hrs = float(pf_df["Hours"].sum())
+    pf_total_fee = float(pf_df["Fee ($)"].sum())
+    st.markdown(f"### PLUMBING / FIRE TOTAL\n**{pf_total_hrs:,.1f} hrs** | **{money(pf_total_fee)}**")
+
+    # Optional downloads
+    st.divider()
+    st.download_button("Download Plumbing/Fire CSV", data=pf_df.to_csv(index=False), file_name="plumbing_fire_work_plan.csv", mime="text/csv")
+    st.download_button("Download Electrical CSV", data=e_df.to_csv(index=False), file_name="electrical_work_plan.csv", mime="text/csv")
