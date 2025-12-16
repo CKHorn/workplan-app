@@ -617,8 +617,14 @@ df = st.session_state["area_df"].copy()
 for col in ["Area (SF)", "$/SF", "Multiplier"]:
     df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
 
-df["Complexity"] = df.get("Complexity", "Standard").fillna("Standard").astype(str)
+# --- Complexity column (robust for older presets / older session state) ---
+if "Complexity" not in df.columns:
+    df["Complexity"] = "Standard"
+else:
+    df["Complexity"] = df["Complexity"].fillna("Standard").astype(str)
+
 df.loc[~df["Complexity"].isin(COMPLEXITY.keys()), "Complexity"] = "Standard"
+
 
 missing_defaults = []
 for i, row in df.iterrows():
@@ -659,8 +665,14 @@ df2 = edited.copy()
 for col in ["Area (SF)", "$/SF", "Multiplier"]:
     df2[col] = pd.to_numeric(df2[col], errors="coerce").fillna(0.0)
 
-df2["Complexity"] = df2.get("Complexity", "Standard").fillna("Standard").astype(str)
+# --- Complexity column (robust for older presets / older session state) ---
+if "Complexity" not in df2.columns:
+    df2["Complexity"] = "Standard"
+else:
+    df2["Complexity"] = df2["Complexity"].fillna("Standard").astype(str)
+
 df2.loc[~df2["Complexity"].isin(COMPLEXITY.keys()), "Complexity"] = "Standard"
+
 
 missing_defaults = []
 for i, row in df2.iterrows():
@@ -913,3 +925,4 @@ with st.expander("Assumptions Used"):
     st.write(f"- Discipline %: Electrical {st.session_state['electrical_pct']:.1f}%, Plumbing/Fire {st.session_state['plumbing_fire_pct']:.1f}%, Mechanical {st.session_state['mechanical_pct']:.1f}%")
     st.write(f"- Plumbing/Fire carveout: Fire Protection = 10% of Plumbing/Fire fee")
     st.write(f"- Plumbing Inputs: Podium={st.session_state['podium']}, Luxury units={st.session_state['lux_units']}, Typical units={st.session_state['typ_units']}, Domestic units={st.session_state['dom_units']}")
+
