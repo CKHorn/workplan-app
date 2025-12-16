@@ -1,19 +1,21 @@
 import streamlit as st
 import pandas as pd
 
-# -----------------------------
-# Template data (edit as needed)
-# -----------------------------
-TEMPLATE = [
-    ("Project Management / QAQC", "Project kickoff meetings", 10),
-    ("Project Management / QAQC", "Schedule development & tracking", 8),
-    ("Project Management / QAQC", "Ongoing client coordination", 18),
-    ("Project Management / QAQC", "MEP coordination", 14),
-    ("Project Management / QAQC", "Fee & scope management", 8),
-    ("Project Management / QAQC", "Internal design reviews", 12),
-    ("Project Management / QAQC", "Senior QA/QC reviews", 14),
-    ("Project Management / QAQC", "Closeout & lessons learned", 8),
+def money(x: float) -> str:
+    return f"${x:,.0f}"
 
+def pct(x: float) -> float:
+    return x / 100.0
+
+# -------------------------------------------------------
+# Template: PM is included INSIDE SD/DD/CD/CA phases
+# (Edit tasks/hours anytime)
+# -------------------------------------------------------
+TEMPLATE = [
+    # SD (includes PM)
+    ("Schematic Design (SD)", "PM: Kickoff & project setup", 6),
+    ("Schematic Design (SD)", "PM: Schedule tracking & coordination", 6),
+    ("Schematic Design (SD)", "PM: Client coordination (SD)", 6),
     ("Schematic Design (SD)", "Utility research & service availability", 10),
     ("Schematic Design (SD)", "Preliminary load calculations", 14),
     ("Schematic Design (SD)", "Service & distribution concepts", 16),
@@ -26,6 +28,10 @@ TEMPLATE = [
     ("Schematic Design (SD)", "Basis of Design narrative", 12),
     ("Schematic Design (SD)", "SD review & revisions", 10),
 
+    # DD (includes PM)
+    ("Design Development (DD)", "PM: Client coordination (DD)", 6),
+    ("Design Development (DD)", "PM: MEP/Arch coordination (DD)", 8),
+    ("Design Development (DD)", "PM: Internal design reviews (DD)", 6),
     ("Design Development (DD)", "Updated load calculations", 14),
     ("Design Development (DD)", "Power plans – typical units", 24),
     ("Design Development (DD)", "Power plans – common areas", 22),
@@ -34,11 +40,13 @@ TEMPLATE = [
     ("Design Development (DD)", "Metering strategy", 10),
     ("Design Development (DD)", "Panel schedules (DD level)", 14),
     ("Design Development (DD)", "Riser & one-line refinement", 14),
-    ("Design Development (DD)", "Arch coordination", 16),
-    ("Design Development (DD)", "Mechanical coordination", 12),
     ("Design Development (DD)", "Code compliance review", 8),
     ("Design Development (DD)", "DD review & revisions", 14),
 
+    # CD (includes PM)
+    ("Construction Documents (CD)", "PM: Coordination & issue management (CD)", 10),
+    ("Construction Documents (CD)", "PM: QA/QC planning & tracking (CD)", 6),
+    ("Construction Documents (CD)", "PM: Internal QA/QC (CD)", 10),
     ("Construction Documents (CD)", "Final unit power plans", 36),
     ("Construction Documents (CD)", "Final common area power plans", 30),
     ("Construction Documents (CD)", "Lighting plans & controls", 32),
@@ -49,158 +57,150 @@ TEMPLATE = [
     ("Construction Documents (CD)", "Details & diagrams", 18),
     ("Construction Documents (CD)", "Grounding & bonding", 10),
     ("Construction Documents (CD)", "Specs & general notes", 14),
-    ("Construction Documents (CD)", "Discipline coordination", 20),
-    ("Construction Documents (CD)", "Internal QA/QC", 18),
     ("Construction Documents (CD)", "Permit set issuance", 12),
 
-    ("Permitting / AHJ", "Permit support", 6),
-    ("Permitting / AHJ", "Plan check review", 10),
-    ("Permitting / AHJ", "Comment responses", 14),
-    ("Permitting / AHJ", "Drawing revisions", 12),
-    ("Permitting / AHJ", "AHJ coordination", 4),
-
-    ("Bidding", "Contractor RFIs", 16),
-    ("Bidding", "Addenda", 14),
-    ("Bidding", "VE reviews", 8),
-    ("Bidding", "Bid evaluation support", 8),
-
-    ("Construction Administration", "Submittal reviews", 34),
-    ("Construction Administration", "Shop drawings", 20),
-    ("Construction Administration", "RFIs", 28),
-    ("Construction Administration", "Site visits", 22),
-    ("Construction Administration", "Change order reviews", 12),
-    ("Construction Administration", "Punchlist support", 12),
-    ("Construction Administration", "As-built review", 10),
+    # CA (includes PM)
+    ("Construction Administration (CA)", "PM: CA coordination & reporting", 8),
+    ("Construction Administration (CA)", "Submittal reviews", 34),
+    ("Construction Administration (CA)", "Shop drawings", 20),
+    ("Construction Administration (CA)", "RFIs", 28),
+    ("Construction Administration (CA)", "Site visits", 22),
+    ("Construction Administration (CA)", "Change order reviews", 12),
+    ("Construction Administration (CA)", "Punchlist support", 12),
+    ("Construction Administration (CA)", "As-built review", 10),
 ]
 
-
-def money(x: float) -> str:
-    return f"${x:,.0f}"
-
-
 def main():
-    st.set_page_config(page_title="Work Plan Generator", layout="wide")
-    st.title("Work Plan Generator — Hours & Fees")
+    st.set_page_config(page_title="Electrical Work Plan Generator", layout="wide")
+    st.title("Electrical Work Plan Generator — Hours & Fees")
 
     with st.sidebar:
-        st.header("Inputs")
+        st.header("Inputs (cascading)")
+
+        construction_cost = st.number_input(
+            "Construction Cost ($)",
+            min_value=0.0,
+            value=10_000_000.0,
+            step=100_000.0,
+        )
+
+        arch_fee_pct = st.number_input(
+            "Arch Fee (%)",
+            min_value=0.0,
+            value=3.5,
+            step=0.1,
+            format="%.2f",
+        )
+
+        mep_fee_pct = st.number_input(
+            "Standard MEP Fee (%)",
+            min_value=0.0,
+            value=15.0,
+            step=0.5,
+            format="%.2f",
+        )
+
+        electrical_fee_pct = st.number_input(
+            "Electrical Fee (%)",
+            min_value=0.0,
+            value=25.0,
+            step=0.5,
+            format="%.2f",
+            help="Applied to the MEP fee dollars to calculate Electrical Target Fee.",
+        )
+
+        st.divider()
+        st.header("Rate inputs (used to scale hours)")
 
         standard_rate = st.number_input("Standard Rate ($/hr)", min_value=0.0, value=150.0, step=5.0)
         multiplier = st.number_input("Multiplier", min_value=0.0, value=1.0, step=0.05, format="%.2f")
         billing_rate = standard_rate * multiplier
 
-        st.caption("Optional: Enter a target fee to auto-scale hours.")
-        target_fee = st.number_input("Target Fee ($) (optional)", min_value=0.0, value=0.0, step=1000.0)
+    # Cascading fee calcs
+    arch_fee_dollars = construction_cost * pct(arch_fee_pct)
+    mep_fee_dollars = arch_fee_dollars * pct(mep_fee_pct)
+    electrical_target_fee = mep_fee_dollars * pct(electrical_fee_pct)
 
-        st.divider()
-        st.write(f"**Billing Rate Used:** {money(billing_rate)}/hr")
+    # Header summary
+    st.subheader("Fee Cascade Summary")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Construction Cost", money(construction_cost))
+    c2.metric("Arch Fee ($)", money(arch_fee_dollars))
+    c3.metric("MEP Fee ($)", money(mep_fee_dollars))
+    c4.metric("Electrical Target Fee ($)", money(electrical_target_fee))
 
-    # Build base dataframe
+    st.write(f"**Billing Rate Used:** {money(billing_rate)}/hr")
+
+    # Build base df
     df = pd.DataFrame(TEMPLATE, columns=["Phase", "Task", "Base Hours"])
     df["Hours"] = df["Base Hours"].astype(float)
 
-    # If target fee provided, scale hours to match budget
-    base_total_hours = df["Hours"].sum()
+    # Scale hours to match Electrical Target Fee
+    base_total_hours = float(df["Hours"].sum())
     base_total_fee = base_total_hours * billing_rate
 
-    if target_fee and billing_rate > 0:
-        # Scale hours proportionally to hit the target fee
-        scale = target_fee / base_total_fee if base_total_fee > 0 else 0.0
-        df["Hours"] = df["Hours"] * scale
+    if billing_rate <= 0:
+        scale = 0.0
     else:
-        scale = 1.0
+        scale = (electrical_target_fee / base_total_fee) if base_total_fee > 0 else 0.0
 
-    # Fee calc
-    df["Fee ($)"] = df["Hours"] * billing_rate
+    df["Hours"] = (df["Hours"] * scale).round(1)
+    df["Fee ($)"] = (df["Hours"] * billing_rate).round(0)
 
-    # Round hours reasonably (you can change this)
-    df["Hours"] = df["Hours"].round(1)
-    df["Fee ($)"] = df["Fee ($)"].round(0)
-
-    # Phase subtotals
-    subtotals = (
-        df.groupby("Phase", as_index=False)[["Hours", "Fee ($)"]]
-        .sum()
-        .rename(columns={"Hours": "Phase Hours", "Fee ($)": "Phase Fee ($)"})
-    )
-
+    # Totals
     total_hours = float(df["Hours"].sum())
     total_fee = float(df["Fee ($)"].sum())
 
-    # Display header info
-    st.subheader("Electrical Detailed Task Plan — Hours & Fees")
-    st.write(f"**Billing Rate Used:** {money(billing_rate)}/hr")
-    if target_fee and billing_rate > 0:
-        st.write(
-            f"**Target Fee:** {money(target_fee)}  |  "
-            f"**Scale Applied to Hours:** {scale:.3f}"
-        )
-
-    # Pretty display table with subtotal rows inserted
-    display_rows = []
-    for phase in df["Phase"].unique():
-        phase_rows = df[df["Phase"] == phase].copy()
-        for _, r in phase_rows.iterrows():
-            display_rows.append(
-                {
-                    "Phase": r["Phase"],
-                    "Task": r["Task"],
-                    "Hours": r["Hours"],
-                    "Fee ($)": r["Fee ($)"],
-                }
-            )
-
-        # Add subtotal line
-        s = subtotals[subtotals["Phase"] == phase].iloc[0]
-        display_rows.append(
-            {
-                "Phase": f"{phase} Subtotal",
-                "Task": "",
-                "Hours": round(float(s["Phase Hours"]), 1),
-                "Fee ($)": round(float(s["Phase Fee ($)"]), 0),
-            }
-        )
-
-    out = pd.DataFrame(display_rows)
-
-    # Format money for display (keep numeric separately for downloads)
-    out_display = out.copy()
-    out_display["Fee ($)"] = out_display["Fee ($)"].apply(lambda v: money(float(v)) if pd.notna(v) else "")
-    out_display["Hours"] = out_display["Hours"].apply(lambda v: f"{float(v):,.1f}" if pd.notna(v) and v != "" else "")
-
-    st.dataframe(out_display, use_container_width=True, hide_index=True)
-
-    st.markdown(
-        f"### TOTAL LABOR\n"
-        f"**{total_hours:,.1f} hrs**  |  **{money(total_fee)}**"
+    st.write(
+        f"**Hours scaling factor applied:** `{scale:.3f}`  "
+        f"(Base total fee @ billing rate was {money(base_total_fee)}; scaled to {money(electrical_target_fee)})"
     )
+
+    st.divider()
+    st.subheader("Electrical Detailed Task Plan — Hours & Fees (by Phase)")
+
+    # Show phases as dropdown expanders
+    for phase in df["Phase"].unique():
+        phase_df = df[df["Phase"] == phase][["Task", "Hours", "Fee ($)"]].copy()
+
+        phase_hours = float(phase_df["Hours"].sum())
+        phase_fee = float(phase_df["Fee ($)"].sum())
+
+        with st.expander(f"{phase}  —  {phase_hours:,.1f} hrs  |  {money(phase_fee)}", expanded=False):
+            pretty = phase_df.copy()
+            pretty["Fee ($)"] = pretty["Fee ($)"].apply(lambda v: money(float(v)))
+            st.dataframe(pretty, use_container_width=True, hide_index=True)
+
+    st.divider()
+    st.markdown(f"### TOTAL LABOR\n**{total_hours:,.1f} hrs**  |  **{money(total_fee)}**")
 
     # Downloads
     st.divider()
     col1, col2 = st.columns(2)
 
     with col1:
-        csv = out.to_csv(index=False)
+        csv = df[["Phase", "Task", "Hours", "Fee ($)"]].to_csv(index=False)
         st.download_button(
-            "Download CSV (with subtotal rows)",
+            "Download CSV (tasks)",
             data=csv,
-            file_name="work_plan.csv",
+            file_name="electrical_work_plan_tasks.csv",
             mime="text/csv",
         )
 
     with col2:
-        # a clean "tasks only" export (no subtotals)
-        tasks_only = df[["Phase", "Task", "Hours", "Fee ($)"]].copy()
-        tasks_only_csv = tasks_only.to_csv(index=False)
+        # Phase summary export
+        phase_summary = (
+            df.groupby("Phase", as_index=False)[["Hours", "Fee ($)"]]
+              .sum()
+              .rename(columns={"Hours": "Phase Hours", "Fee ($)": "Phase Fee ($)"})
+        )
+        phase_csv = phase_summary.to_csv(index=False)
         st.download_button(
-            "Download CSV (tasks only)",
-            data=tasks_only_csv,
-            file_name="work_plan_tasks_only.csv",
+            "Download CSV (phase summary)",
+            data=phase_csv,
+            file_name="electrical_work_plan_phase_summary.csv",
             mime="text/csv",
         )
-
-    st.caption("Tip: Edit TEMPLATE in the code to match your typical scope/tasks.")
-
 
 if __name__ == "__main__":
     main()
