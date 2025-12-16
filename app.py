@@ -77,7 +77,7 @@ def main():
     # Sidebar inputs
     # -----------------------------
     with st.sidebar:
-        st.header("Inputs (cascading)")
+        st.header("Construction and % Design Fee Inputs")
 
         construction_cost = st.number_input(
             "Construction Cost ($)",
@@ -87,7 +87,7 @@ def main():
         )
 
         arch_fee_pct = st.number_input(
-            "Arch Fee (%)",
+            "Architectural Fee (%)",
             min_value=0.0,
             value=3.5,
             step=0.1,
@@ -111,7 +111,7 @@ def main():
         )
 
         st.divider()
-        st.header("Rate inputs (used to scale hours)")
+        st.header("Rate Inputs")
 
         base_raw_rate = st.number_input(
             "Base Raw Rate ($/hr)",
@@ -140,7 +140,7 @@ def main():
     # -----------------------------
     # Summary
     # -----------------------------
-    st.subheader("Fee Cascade Summary")
+    st.subheader("Design Fee Summary")
     c1, c2, c3, c4 = st.columns(4)
 
     with c1:
@@ -148,7 +148,7 @@ def main():
         st.write(money(construction_cost))
 
     with c2:
-        st.markdown("**Arch Fee ($)**")
+        st.markdown("**Architectural Fee ($)**")
         st.write(money(arch_fee_dollars))
 
     with c3:
@@ -174,10 +174,7 @@ def main():
     base_total_hours = float(df["Hours"].sum())
     base_total_fee = base_total_hours * billing_rate
 
-    if billing_rate <= 0 or base_total_fee <= 0:
-        scale = 0.0
-    else:
-        scale = electrical_target_fee / base_total_fee
+    scale = 0.0 if billing_rate <= 0 or base_total_fee <= 0 else electrical_target_fee / base_total_fee
 
     df["Hours"] = (df["Hours"] * scale).round(1)
     df["Fee ($)"] = (df["Hours"] * billing_rate).round(0)
@@ -209,35 +206,6 @@ def main():
 
     st.divider()
     st.markdown(f"### TOTAL LABOR\n**{total_hours:,.1f} hrs**  |  **{money(total_fee)}**")
-
-    # -----------------------------
-    # Downloads
-    # -----------------------------
-    st.divider()
-    col1, col2 = st.columns(2)
-
-    with col1:
-        csv_tasks = df[["Phase", "Task", "Hours", "Fee ($)"]].to_csv(index=False)
-        st.download_button(
-            "Download CSV (tasks)",
-            data=csv_tasks,
-            file_name="electrical_work_plan_tasks.csv",
-            mime="text/csv",
-        )
-
-    with col2:
-        phase_summary = (
-            df.groupby("Phase", as_index=False)[["Hours", "Fee ($)"]]
-              .sum()
-              .rename(columns={"Hours": "Phase Hours", "Fee ($)": "Phase Fee ($)"})
-        )
-        csv_phase = phase_summary.to_csv(index=False)
-        st.download_button(
-            "Download CSV (phase summary)",
-            data=csv_phase,
-            file_name="electrical_work_plan_phase_summary.csv",
-            mime="text/csv",
-        )
 
 if __name__ == "__main__":
     main()
