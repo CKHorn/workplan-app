@@ -1,5 +1,4 @@
 import json
-import re
 import streamlit as st
 import pandas as pd
 
@@ -12,11 +11,11 @@ def money(x: float) -> str:
     return f"${x:,.0f}"
 
 def normalize(weights: dict) -> dict:
-    total = sum(max(v, 0.0) for v in weights.values())
+    total = sum(max(float(v), 0.0) for v in weights.values())
     if total <= 0:
         n = len(weights)
         return {k: 1.0 / n for k in weights}
-    return {k: max(v, 0.0) / total for k, v in weights.items()}
+    return {k: max(float(v), 0.0) / total for k, v in weights.items()}
 
 def safe_num(x, default=0.0):
     try:
@@ -25,7 +24,9 @@ def safe_num(x, default=0.0):
         return default
 
 def build_plan_from_library(task_df: pd.DataFrame, target_fee: float, rate: float, phase_split: dict) -> pd.DataFrame:
+    """Scale task-hours so each phase fee matches phase_split. BaseHours act as weights within each phase."""
     phase_split_n = normalize(phase_split)
+
     df = task_df.copy()
     df = df[df.get("Enabled", True) == True].copy()
     if df.empty:
@@ -35,7 +36,7 @@ def build_plan_from_library(task_df: pd.DataFrame, target_fee: float, rate: floa
 
     out = []
     for ph, frac in phase_split_n.items():
-        phase_fee = target_fee * frac
+        phase_fee = float(target_fee) * float(frac)
         phase_hours = phase_fee / rate if rate > 0 else 0.0
 
         p = df[df["Phase"] == ph].copy()
@@ -53,7 +54,7 @@ def build_plan_from_library(task_df: pd.DataFrame, target_fee: float, rate: floa
     return out_df
 
 # =========================================================
-# $/SF Lookup (Space Type -> $/SF)
+# $/SF Lookup
 # =========================================================
 RATE_LOOKUP = {
     "Office (Fitout / Renovation)": 1.50,
@@ -69,9 +70,8 @@ RATE_LOOKUP = {
     "Parking (Enclosed)": 0.45,
     "Multifamily (Garden Style)": 0.85,
     "Multifamily (High Rise)": 1.01,
-    # These need override
-    "Site Lighting": None,
-    "Site Parking": None,
+    "Site Lighting": None,   # override required
+    "Site Parking": None,    # override required
     "BOH Rooms": 0.75,
     "Classroom": 1.50,
     "Bar / Lounge Areas": 1.25,
@@ -108,7 +108,8 @@ def build_default_area_df():
     ]
     return pd.DataFrame([new_space_row(t, n, a) for t, n, a in examples])
 
-def recalc_area_df(df_in: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+def recalc_area_df(df_in: pd.DataFrame):
+    """Auto-fill $/SF from Space Type unless override checked; Total Cost = Area × $/SF."""
     df = df_in.copy()
 
     required_cols = ["Delete?", "Override $/SF?", "Space Name", "Space Type", "Area (SF)", "$/SF", "Total Cost", "Notes"]
@@ -121,9 +122,10 @@ def recalc_area_df(df_in: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
 
     missing_defaults = []
     for i, row in df.iterrows():
-        stype = row.get("Space Type", "")
+        stype = str(row.get("Space Type", ""))
         override = bool(row.get("Override $/SF?", False))
         lookup = RATE_LOOKUP.get(stype)
+
         if not override:
             if lookup is None:
                 df.loc[i, "$/SF"] = 0.0
@@ -136,30 +138,36 @@ def recalc_area_df(df_in: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     return df, missing_defaults
 
 def style_preview(df: pd.DataFrame):
+    """
+    Read-only preview with colors:
+    - Input columns tinted green
+    - Calculated columns tinted gray
+    - Missing required Area or $/SF show red border
+    """
     input_cols = ["Space Name", "Space Type", "Area (SF)", "Override $/SF?", "$/SF", "Notes"]
     computed_cols = ["Total Cost"]
 
-    def _cell_base(col):
+    def base_color(col):
         if col in computed_cols:
-            return "background-color: #F3F4F6;"  # gray
+            return "background-color: #F3F4F6;"  # light gray
         if col in input_cols:
-            return "background-color: #ECFDF5;"  # light green
+            return "background-color: #ECFDF5;"  # very light green
         return ""
 
-    def _row_style(row):
-        styles = []
+    def row_style(row):
         stype = str(row.get("Space Type", ""))
         override = bool(row.get("Override $/SF?", False))
         area = float(row.get("Area (SF)", 0.0))
         psf = float(row.get("$/SF", 0.0))
+        lookup = RATE_LOOKUP.get(stype)
 
         missing_area = area <= 0
-        lookup = RATE_LOOKUP.get(stype)
         needs_override = (lookup is None) and (not override)
         missing_psf = (psf <= 0) and (override or lookup is not None)
 
+        styles = []
         for col in row.index:
-            base = _cell_base(col)
+            base = base_color(col)
             if col == "Area (SF)" and missing_area:
                 styles.append(base + "border: 2px solid #EF4444;")
             elif col == "$/SF" and (needs_override or missing_psf):
@@ -169,11 +177,7 @@ def style_preview(df: pd.DataFrame):
         return styles
 
     preview = df.copy()
-    preview["Area (SF)"] = preview["Area (SF)"].map(lambda x: float(x))
-    preview["$/SF"] = preview["$/SF"].map(lambda x: float(x))
-    preview["Total Cost"] = preview["Total Cost"].map(lambda x: float(x))
-
-    styler = preview.style.apply(_row_style, axis=1).format({
+    styler = preview.style.apply(row_style, axis=1).format({
         "Area (SF)": "{:,.0f}",
         "$/SF": "{:,.2f}",
         "Total Cost": "${:,.0f}",
@@ -181,7 +185,7 @@ def style_preview(df: pd.DataFrame):
     return styler
 
 # =========================================================
-# Default Task Libraries
+# Task Libraries
 # =========================================================
 def electrical_defaults_df():
     tasks = [
@@ -375,93 +379,25 @@ def build_plumbing_task_df_from_library(lib_df: pd.DataFrame, podium: bool, lux_
     return out[["Phase","Task","BaseHours","Enabled"]]
 
 # =========================================================
-# Presets (JSON)
-# =========================================================
-def export_preset() -> str:
-    preset = {
-        "version": 1,
-        "rate": {
-            "base_raw_rate": st.session_state.get("base_raw_rate", 56.0),
-            "multiplier": st.session_state.get("multiplier", 3.6),
-        },
-        "phase_split": st.session_state.get("phase_split", {"SD":12.0,"DD":40.0,"CD":28.0,"Bidding":1.5,"CA":18.5}),
-        "discipline_pct": {
-            "electrical": st.session_state.get("electrical_pct", 28.0),
-            "plumbing_fire": st.session_state.get("plumbing_fire_pct", 24.0),
-            "mechanical": st.session_state.get("mechanical_pct", 48.0),
-        },
-        "auto_balance": st.session_state.get("auto_balance", True),
-        "plumbing_inputs": {
-            "podium": st.session_state.get("podium", True),
-            "lux_units": st.session_state.get("lux_units", 8),
-            "typ_units": st.session_state.get("typ_units", 12),
-            "dom_units": st.session_state.get("dom_units", 25),
-        },
-        "area_df": st.session_state.get("area_df", build_default_area_df()).to_dict(orient="list"),
-        "tasks": {
-            "electrical": st.session_state.get("electrical_lib", electrical_defaults_df()).to_dict(orient="list"),
-            "plumbing": st.session_state.get("plumbing_lib", plumbing_defaults_df()).to_dict(orient="list"),
-            "mechanical": st.session_state.get("mechanical_lib", mechanical_defaults_df()).to_dict(orient="list"),
-        },
-    }
-    return json.dumps(preset, indent=2)
-
-def load_preset_from_json(text: str):
-    preset = json.loads(text)
-
-    st.session_state["base_raw_rate"] = safe_num(preset.get("rate", {}).get("base_raw_rate", 56.0), 56.0)
-    st.session_state["multiplier"] = safe_num(preset.get("rate", {}).get("multiplier", 3.6), 3.6)
-
-    st.session_state["phase_split"] = preset.get("phase_split", {"SD":12.0,"DD":40.0,"CD":28.0,"Bidding":1.5,"CA":18.5})
-
-    disc = preset.get("discipline_pct", {})
-    st.session_state["electrical_pct"] = safe_num(disc.get("electrical", 28.0), 28.0)
-    st.session_state["plumbing_fire_pct"] = safe_num(disc.get("plumbing_fire", 24.0), 24.0)
-    st.session_state["mechanical_pct"] = safe_num(disc.get("mechanical", 48.0), 48.0)
-
-    st.session_state["auto_balance"] = bool(preset.get("auto_balance", True))
-
-    p_in = preset.get("plumbing_inputs", {})
-    st.session_state["podium"] = bool(p_in.get("podium", True))
-    st.session_state["lux_units"] = int(safe_num(p_in.get("lux_units", 8), 8))
-    st.session_state["typ_units"] = int(safe_num(p_in.get("typ_units", 12), 12))
-    st.session_state["dom_units"] = int(safe_num(p_in.get("dom_units", 25), 25))
-
-    area_dict = preset.get("area_df", None)
-    st.session_state["area_df"] = pd.DataFrame(area_dict) if area_dict else build_default_area_df()
-
-    tasks = preset.get("tasks", {})
-    if "electrical" in tasks:
-        st.session_state["electrical_lib"] = pd.DataFrame(tasks["electrical"])
-    if "plumbing" in tasks:
-        st.session_state["plumbing_lib"] = pd.DataFrame(tasks["plumbing"])
-    if "mechanical" in tasks:
-        st.session_state["mechanical_lib"] = pd.DataFrame(tasks["mechanical"])
-
-# =========================================================
 # App
 # =========================================================
 st.set_page_config(page_title="MEP Fee and Work Plan Generator", layout="wide")
 st.title("MEP Fee and Work Plan Generator")
 
-# Initialize state
+# ---------- State init ----------
 if "area_df" not in st.session_state:
     st.session_state["area_df"] = build_default_area_df()
-if "electrical_lib" not in st.session_state:
-    st.session_state["electrical_lib"] = electrical_defaults_df()
-if "plumbing_lib" not in st.session_state:
-    st.session_state["plumbing_lib"] = plumbing_defaults_df()
-if "mechanical_lib" not in st.session_state:
-    st.session_state["mechanical_lib"] = mechanical_defaults_df()
 
 if "phase_split" not in st.session_state:
-    st.session_state["phase_split"] = {"SD":12.0,"DD":40.0,"CD":28.0,"Bidding":1.5,"CA":18.5}
+    st.session_state["phase_split"] = {"SD":12.0, "DD":40.0, "CD":28.0, "Bidding":1.5, "CA":18.5}
+
 if "electrical_pct" not in st.session_state:
     st.session_state["electrical_pct"] = 28.0
 if "plumbing_fire_pct" not in st.session_state:
     st.session_state["plumbing_fire_pct"] = 24.0
 if "mechanical_pct" not in st.session_state:
     st.session_state["mechanical_pct"] = 48.0
+
 if "auto_balance" not in st.session_state:
     st.session_state["auto_balance"] = True
 
@@ -479,37 +415,23 @@ if "typ_units" not in st.session_state:
 if "dom_units" not in st.session_state:
     st.session_state["dom_units"] = 25
 
-# Sidebar
+# Task libs (kept simple here; can re-add editable task editors later)
+if "electrical_lib" not in st.session_state:
+    st.session_state["electrical_lib"] = electrical_defaults_df()
+if "plumbing_lib" not in st.session_state:
+    st.session_state["plumbing_lib"] = plumbing_defaults_df()
+if "mechanical_lib" not in st.session_state:
+    st.session_state["mechanical_lib"] = mechanical_defaults_df()
+
+# ---------- Sidebar: Rate ----------
 with st.sidebar:
-    st.header("Presets")
-    up = st.file_uploader("Load preset (JSON)", type=["json"])
-    if up is not None:
-        try:
-            load_preset_from_json(up.read().decode("utf-8"))
-            st.success("Preset loaded.")
-            st.rerun()
-        except Exception as e:
-            st.error(f"Could not load preset: {e}")
-
-    st.download_button(
-        "Save preset (JSON)",
-        data=export_preset(),
-        file_name="mep_fee_workplan_preset.json",
-        mime="application/json",
-    )
-
-    st.divider()
     st.header("Rate Inputs")
-    st.session_state["base_raw_rate"] = st.number_input(
-        "Base Raw Rate ($/hr)", min_value=0.0, value=float(st.session_state["base_raw_rate"]), step=1.0
-    )
-    st.session_state["multiplier"] = st.number_input(
-        "Multiplier", min_value=0.0, value=float(st.session_state["multiplier"]), step=0.1, format="%.2f"
-    )
+    st.session_state["base_raw_rate"] = st.number_input("Base Raw Rate ($/hr)", min_value=0.0, value=float(st.session_state["base_raw_rate"]), step=1.0)
+    st.session_state["multiplier"] = st.number_input("Multiplier", min_value=0.0, value=float(st.session_state["multiplier"]), step=0.1, format="%.2f")
 
 billing_rate = float(st.session_state["base_raw_rate"]) * float(st.session_state["multiplier"])
 
-# Phase split
+# ---------- Phase Split ----------
 st.subheader("Design Phase Fee % Split")
 p1, p2, p3, p4, p5 = st.columns(5)
 ps = st.session_state["phase_split"]
@@ -519,15 +441,12 @@ ps["CD"] = p3.number_input("CD (%)", min_value=0.0, value=float(ps.get("CD", 28.
 ps["Bidding"] = p4.number_input("Bidding (%)", min_value=0.0, value=float(ps.get("Bidding", 1.5)), step=0.1, format="%.1f")
 ps["CA"] = p5.number_input("CA (%)", min_value=0.0, value=float(ps.get("CA", 18.5)), step=0.5, format="%.1f")
 st.session_state["phase_split"] = ps
-st.caption("Phase split auto-normalizes to 100% if entries don’t add to 100.")
 
-# Discipline splits
+# ---------- Discipline Split ----------
 st.subheader("Discipline % of MEP Fee")
 d1, d2, d3, d4 = st.columns([1, 1, 1, 1.2])
-
 with d4:
     st.session_state["auto_balance"] = st.checkbox("Auto-balance to 100%", value=bool(st.session_state["auto_balance"]))
-
 with d1:
     st.session_state["electrical_pct"] = st.number_input("Electrical (%)", min_value=0.0, value=float(st.session_state["electrical_pct"]), step=0.5, format="%.1f")
 with d2:
@@ -537,43 +456,33 @@ if st.session_state["auto_balance"]:
     remainder = max(0.0, 100.0 - float(st.session_state["electrical_pct"]) - float(st.session_state["plumbing_fire_pct"]))
     st.session_state["mechanical_pct"] = remainder
     with d3:
-        st.number_input("Mechanical (%)", min_value=0.0, value=float(remainder), step=0.5, format="%.1f", disabled=True)
+        st.number_input("Mechanical (%)", min_value=0.0, value=float(remainder), disabled=True)
 else:
     with d3:
         st.session_state["mechanical_pct"] = st.number_input("Mechanical (%)", min_value=0.0, value=float(st.session_state["mechanical_pct"]), step=0.5, format="%.1f")
 
-# Fee summary
+# =========================================================
+# Design Fee Summary + Area Calculator
+# =========================================================
 st.subheader("Design Fee Summary")
 
-# =========================================================
-# Area-Based Fee Calculator (Auto-update + styled preview)
-# =========================================================
 st.markdown("#### Area-Based Fee Calculator (Drives MEP Fee)")
 c1, c2, c3 = st.columns([1, 1, 2])
-
-def _area_editor_changed():
-    df_cur = st.session_state["area_editor"]
-    df_new, _ = recalc_area_df(df_cur)
-    st.session_state["area_df"] = df_new
-
 with c1:
     if st.button("➕ Add Row"):
         st.session_state["area_df"] = pd.concat(
             [st.session_state["area_df"], pd.DataFrame([new_space_row(space_type=SPACE_TYPES[0])])],
             ignore_index=True,
         )
-        st.session_state["area_df"], _ = recalc_area_df(st.session_state["area_df"])
-
 with c2:
     if st.button("🗑️ Delete Checked Rows"):
         df_del = st.session_state["area_df"].copy()
         df_del = df_del[df_del["Delete?"] != True].reset_index(drop=True)
-        st.session_state["area_df"], _ = recalc_area_df(df_del)
-
+        st.session_state["area_df"] = df_del
 with c3:
-    st.caption("Inputs are tinted green in the preview below. Calculated cells are gray. Red borders = missing required inputs.")
+    st.caption("Total Cost auto-calculates. $/SF auto-fills from Space Type unless Override is checked.")
 
-# Always recalc before rendering editor
+# Always recalc before showing editor
 st.session_state["area_df"], missing_defaults = recalc_area_df(st.session_state["area_df"])
 
 edited = st.data_editor(
@@ -581,7 +490,6 @@ edited = st.data_editor(
     use_container_width=True,
     hide_index=True,
     key="area_editor",
-    on_change=_area_editor_changed,
     column_config={
         "Delete?": st.column_config.CheckboxColumn(width="small"),
         "Override $/SF?": st.column_config.CheckboxColumn(width="small"),
@@ -594,7 +502,7 @@ edited = st.data_editor(
     },
 )
 
-# Recalc after edit (ensures immediate consistency)
+# Recalc after edit (THIS is the stable auto-update)
 st.session_state["area_df"], missing_defaults = recalc_area_df(edited)
 
 area_mep_fee = float(st.session_state["area_df"]["Total Cost"].sum())
@@ -607,11 +515,10 @@ if missing_defaults:
     )
 
 st.markdown("##### Styled Preview (Read Only)")
+st.caption("Inputs = green tint. Calculated = gray tint. Red border = missing required inputs.")
 st.dataframe(style_preview(st.session_state["area_df"]), use_container_width=True)
 
-# =========================================================
-# Fee split results (uses area_mep_fee)
-# =========================================================
+# Summary fee splits
 electrical_target_fee = area_mep_fee * (float(st.session_state["electrical_pct"]) / 100.0)
 plumbing_fire_target_fee = area_mep_fee * (float(st.session_state["plumbing_fire_pct"]) / 100.0)
 mechanical_target_fee = area_mep_fee * (float(st.session_state["mechanical_pct"]) / 100.0)
@@ -710,4 +617,3 @@ with col_m:
             st.dataframe(show, use_container_width=True, hide_index=True)
     st.divider()
     st.markdown(f"### MECHANICAL TOTAL\n**{float(m_df['Hours'].sum()):,.1f} hrs** | **{money(float(m_df['Fee ($)'].sum()))}**")
-
