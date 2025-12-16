@@ -398,14 +398,23 @@ with top3:
 construction_cost_total = total_area * float(st.session_state["construction_cost_psf"])
 arch_fee_total = construction_cost_total * (float(st.session_state["arch_fee_pct"]) / 100.0)
 
+typical_mep_total = arch_fee_total * 0.15
+
 st.markdown("##### Auto-Calculated Totals")
-ac1, ac2 = st.columns(2)
+ac1, ac2, ac3 = st.columns(3)
+
 with ac1:
     st.markdown("**Total Construction Cost**")
     st.write(money(construction_cost_total))
+
 with ac2:
     st.markdown("**Arch Fee (Arch % × Construction Cost)**")
     st.write(money(arch_fee_total))
+
+with ac3:
+    st.markdown("**Typical MEP (15% of Arch Fee)**")
+    st.write(money(typical_mep_total))
+
 
 # =========================================================
 # Phase & Discipline Splits
@@ -564,3 +573,4 @@ with col_pf:
     render_section("Plumbing / Fire", pf_plan)
 with col_m:
     render_section("Mechanical", m_plan)
+
