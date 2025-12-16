@@ -181,13 +181,29 @@ def main():
     # -----------------------------
     # Summary
     # -----------------------------
-    st.subheader("Design Fee Summary")
-    s1, s2, s3, s4, s5 = st.columns(5)
-    s1.metric("Construction Cost", money(construction_cost))
-    s2.metric("Architectural Fee", money(arch_fee))
-    s3.metric("MEP Fee", money(mep_fee))
-    s4.metric("Electrical Fee (28%)", money(electrical_fee))
-    s5.metric("Plumbing / Fire Fee (24%)", money(plumbing_fire_fee))
+st.subheader("Design Fee Summary")
+c1, c2, c3, c4, c5 = st.columns(5)
+
+with c1:
+    st.markdown("**Construction Cost**")
+    st.write(money(construction_cost))
+
+with c2:
+    st.markdown("**Architectural Fee**")
+    st.write(money(arch_fee))
+
+with c3:
+    st.markdown("**MEP Fee**")
+    st.write(money(mep_fee))
+
+with c4:
+    st.markdown("**Electrical Fee (28% of MEP)**")
+    st.write(money(electrical_fee))
+
+with c5:
+    st.markdown("**Plumbing / Fire Fee (24% of MEP)**")
+    st.write(money(plumbing_fire_fee))
+
 
     # -----------------------------
     # Display
@@ -219,3 +235,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
