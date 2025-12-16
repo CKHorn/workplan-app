@@ -20,16 +20,36 @@ def normalize_pct_dict(d: dict) -> dict:
         return {k: 1.0 / n for k in vals}
     return {k: v / total for k, v in vals.items()}
 
+def total_pct_badge(total_pct: float, label: str = "Total %") -> str:
+    ok = abs(float(total_pct) - 100.0) < 0.01
+    bg = "#16a34a" if ok else "#dc2626"  # green / red
+    return f"""
+    <div style="
+        padding:10px 12px;
+        border-radius:10px;
+        color:white;
+        font-weight:700;
+        display:inline-block;
+        background:{bg};
+        min-width:140px;
+        text-align:center;">
+        {label}: {total_pct:,.1f}%
+    </div>
+    """
+
 def build_plan_from_library(task_df: pd.DataFrame, target_fee: float, billing_rate: float, phase_split_pct: dict) -> pd.DataFrame:
     phase_frac = normalize_pct_dict(phase_split_pct)
 
     df = task_df.copy()
+    if "Enabled" not in df.columns:
+        df["Enabled"] = True
     df["Enabled"] = df["Enabled"].astype(bool)
     df = df[df["Enabled"]].copy()
+
     if df.empty:
         return pd.DataFrame([{"Phase": "SD", "Task": "No tasks enabled", "Hours": 0.0, "Fee ($)": 0.0}])
 
-    df["BaseHours"] = pd.to_numeric(df["BaseHours"], errors="coerce").fillna(0.0)
+    df["BaseHours"] = pd.to_numeric(df.get("BaseHours", 0.0), errors="coerce").fillna(0.0)
 
     out_rows = []
     for ph in PHASES:
@@ -37,14 +57,14 @@ def build_plan_from_library(task_df: pd.DataFrame, target_fee: float, billing_ra
         phase_fee = float(target_fee) * float(frac)
         phase_hours = (phase_fee / billing_rate) if billing_rate > 0 else 0.0
 
-        p = df[df["Phase"] == ph].copy()
+        p = df[df.get("Phase", "") == ph].copy()
         if p.empty:
             continue
 
         w_sum = float(p["BaseHours"].sum())
         p["Hours"] = (p["BaseHours"] / w_sum) * phase_hours if w_sum > 0 else 0.0
         p["Fee ($)"] = p["Hours"] * billing_rate
-        out_rows.append(p[["Phase", "Task", "Hours", "Fee ($)"]])
+        out_rows.append(p[[ "Phase", "Task", "Hours", "Fee ($)" ]])
 
     if not out_rows:
         return pd.DataFrame([{"Phase": "SD", "Task": "No tasks enabled", "Hours": 0.0, "Fee ($)": 0.0}])
@@ -140,7 +160,7 @@ def recalc_area_df(df_in: pd.DataFrame):
     return df
 
 # =========================================================
-# Tasks (keeping your detailed weights)
+# Tasks (your detailed weights)
 # =========================================================
 def electrical_defaults_df():
     tasks = [
@@ -289,7 +309,7 @@ def mechanical_defaults_df():
 def build_plumbing_task_df(lib_df: pd.DataFrame, podium: bool, lux_units: int, typ_units: int, dom_units: int) -> pd.DataFrame:
     df = lib_df.copy()
 
-    # --- SAFETY: ensure expected columns exist ---
+    # ---- FIX: make this resilient to older session_state frames missing Tag ----
     if "Tag" not in df.columns:
         df["Tag"] = ""
     if "Enabled" not in df.columns:
@@ -303,8 +323,18 @@ def build_plumbing_task_df(lib_df: pd.DataFrame, podium: bool, lux_units: int, t
 
     df["Enabled"] = df["Enabled"].astype(bool)
     df = df[df["Enabled"]].copy()
-    ...
+    if df.empty:
+        return pd.DataFrame([{"Phase":"SD","Task":"No plumbing tasks enabled","BaseHours":1.0,"Enabled":True}])
 
+    df["BaseHours"] = pd.to_numeric(df["BaseHours"], errors="coerce").fillna(0.0)
+    df["Tag"] = df["Tag"].fillna("").astype(str)
+
+    rows = []
+    for _, r in df.iterrows():
+        tag = str(r.get("Tag", "")).strip()
+        ph = r["Phase"]
+        task = r["Task"]
+        base = float(r["BaseHours"])
 
         if tag == "podium_only":
             if not podium:
@@ -347,8 +377,6 @@ if "plumbing_fire_pct" not in st.session_state:
     st.session_state["plumbing_fire_pct"] = 24.0
 if "mechanical_pct" not in st.session_state:
     st.session_state["mechanical_pct"] = 48.0
-if "auto_balance" not in st.session_state:
-    st.session_state["auto_balance"] = True
 
 if "base_raw_rate" not in st.session_state:
     st.session_state["base_raw_rate"] = 56.0
@@ -371,6 +399,10 @@ if "plumbing_lib" not in st.session_state:
 if "mechanical_lib" not in st.session_state:
     st.session_state["mechanical_lib"] = mechanical_defaults_df()
 
+# ---- FIX: handle older session_state plumbing_lib missing Tag column ----
+if "Tag" not in st.session_state["plumbing_lib"].columns:
+    st.session_state["plumbing_lib"]["Tag"] = ""
+
 # =========================================================
 # Sidebar: rates
 # =========================================================
@@ -385,7 +417,6 @@ billing_rate = float(st.session_state["base_raw_rate"]) * float(st.session_state
 # =========================================================
 st.subheader("Project Cost & Fee Context")
 
-# Ensure area df is current numeric
 st.session_state["area_df"] = recalc_area_df(st.session_state["area_df"])
 total_area = float(pd.to_numeric(st.session_state["area_df"]["Area (SF)"], errors="coerce").fillna(0.0).sum())
 
@@ -397,48 +428,50 @@ with top2:
 with top3:
     st.session_state["arch_fee_pct"] = st.number_input("Arch Fee (%)", min_value=0.0, value=float(st.session_state["arch_fee_pct"]), step=0.1, format="%.2f")
 
-# NEW: Auto-calculated totals section
 construction_cost_total = total_area * float(st.session_state["construction_cost_psf"])
 arch_fee_total = construction_cost_total * (float(st.session_state["arch_fee_pct"]) / 100.0)
+typical_mep_total = arch_fee_total * 0.15
 
 st.markdown("##### Auto-Calculated Totals")
-ac1, ac2 = st.columns(2)
+ac1, ac2, ac3 = st.columns(3)
 with ac1:
     st.markdown("**Total Construction Cost**")
     st.write(money(construction_cost_total))
 with ac2:
     st.markdown("**Arch Fee (Arch % × Construction Cost)**")
     st.write(money(arch_fee_total))
+with ac3:
+    st.markdown("**Typical MEP (15% of Arch Fee)**")
+    st.write(money(typical_mep_total))
 
 # =========================================================
-# Phase & Discipline Splits
+# Phase & Discipline Splits + Total % badges
 # =========================================================
 st.subheader("Design Phase Fee % Split")
-p1, p2, p3, p4, p5 = st.columns(5)
+p1, p2, p3, p4, p5, p6 = st.columns([1, 1, 1, 1, 1, 0.9])
 ps = st.session_state["phase_split"]
 ps["SD"] = p1.number_input("SD (%)", min_value=0.0, value=float(ps.get("SD", 12.0)), step=0.5, format="%.1f")
 ps["DD"] = p2.number_input("DD (%)", min_value=0.0, value=float(ps.get("DD", 40.0)), step=0.5, format="%.1f")
 ps["CD"] = p3.number_input("CD (%)", min_value=0.0, value=float(ps.get("CD", 28.0)), step=0.5, format="%.1f")
 ps["Bidding"] = p4.number_input("Bidding (%)", min_value=0.0, value=float(ps.get("Bidding", 1.5)), step=0.1, format="%.1f")
 ps["CA"] = p5.number_input("CA (%)", min_value=0.0, value=float(ps.get("CA", 18.5)), step=0.5, format="%.1f")
+phase_total = float(ps["SD"] + ps["DD"] + ps["CD"] + ps["Bidding"] + ps["CA"])
+with p6:
+    st.markdown(total_pct_badge(phase_total, "Total %"), unsafe_allow_html=True)
 st.session_state["phase_split"] = ps
 
 st.subheader("Discipline % of MEP Fee")
-d1, d2, d3, d4 = st.columns([1, 1, 1, 1.2])
-with d4:
-    st.session_state["auto_balance"] = st.checkbox("Auto-balance to 100%", value=bool(st.session_state["auto_balance"]))
+d1, d2, d3, d4 = st.columns([1, 1, 1, 0.9])
 with d1:
     st.session_state["electrical_pct"] = st.number_input("Electrical (%)", min_value=0.0, value=float(st.session_state["electrical_pct"]), step=0.5, format="%.1f")
 with d2:
     st.session_state["plumbing_fire_pct"] = st.number_input("Plumbing / Fire (%)", min_value=0.0, value=float(st.session_state["plumbing_fire_pct"]), step=0.5, format="%.1f")
-if st.session_state["auto_balance"]:
-    remainder = max(0.0, 100.0 - float(st.session_state["electrical_pct"]) - float(st.session_state["plumbing_fire_pct"]))
-    st.session_state["mechanical_pct"] = remainder
-    with d3:
-        st.number_input("Mechanical (%)", min_value=0.0, value=float(remainder), disabled=True)
-else:
-    with d3:
-        st.session_state["mechanical_pct"] = st.number_input("Mechanical (%)", min_value=0.0, value=float(st.session_state["mechanical_pct"]), step=0.5, format="%.1f")
+with d3:
+    st.session_state["mechanical_pct"] = st.number_input("Mechanical (%)", min_value=0.0, value=float(st.session_state["mechanical_pct"]), step=0.5, format="%.1f")
+
+disc_total = float(st.session_state["electrical_pct"] + st.session_state["plumbing_fire_pct"] + st.session_state["mechanical_pct"])
+with d4:
+    st.markdown(total_pct_badge(disc_total, "Total %"), unsafe_allow_html=True)
 
 # =========================================================
 # Design Fee Summary + Area Calculator
@@ -504,7 +537,7 @@ with sum4:
 st.write(f"**Billing Rate Used:** {money(billing_rate)}/hr (Base {money(st.session_state['base_raw_rate'])}/hr × {st.session_state['multiplier']:.2f})")
 
 # =========================================================
-# Work Plan Generator (unchanged from your weights setup)
+# Work Plan Generator
 # =========================================================
 electrical_target_fee = area_mep_fee * (float(st.session_state["electrical_pct"]) / 100.0)
 plumbing_fire_target_fee = area_mep_fee * (float(st.session_state["plumbing_fire_pct"]) / 100.0)
@@ -535,7 +568,13 @@ with pf_inputs[4]:
 
 e_plan = build_plan_from_library(st.session_state["electrical_lib"], electrical_target_fee, billing_rate, st.session_state["phase_split"])
 
-pl_base = build_plumbing_task_df(st.session_state["plumbing_lib"], st.session_state["podium"], st.session_state["lux_units"], st.session_state["typ_units"], st.session_state["dom_units"])
+pl_base = build_plumbing_task_df(
+    st.session_state["plumbing_lib"],
+    st.session_state["podium"],
+    st.session_state["lux_units"],
+    st.session_state["typ_units"],
+    st.session_state["dom_units"]
+)
 p_plan = build_plan_from_library(pl_base, plumbing_fee, billing_rate, st.session_state["phase_split"])
 
 fire_lib = pd.DataFrame([{"Phase": ph, "Task": "Fire Protection", "BaseHours": 1.0, "Enabled": True} for ph in PHASES])
@@ -567,4 +606,3 @@ with col_pf:
     render_section("Plumbing / Fire", pf_plan)
 with col_m:
     render_section("Mechanical", m_plan)
-
