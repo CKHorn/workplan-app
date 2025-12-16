@@ -108,14 +108,27 @@ def main():
             value=25.0,
             step=0.5,
             format="%.2f",
-            help="Applied to the MEP fee dollars to calculate Electrical Target Fee.",
         )
 
         st.divider()
         st.header("Rate inputs (used to scale hours)")
-        standard_rate = st.number_input("Standard Rate ($/hr)", min_value=0.0, value=150.0, step=5.0)
-        multiplier = st.number_input("Multiplier", min_value=0.0, value=1.0, step=0.05, format="%.2f")
-        billing_rate = standard_rate * multiplier
+
+        base_raw_rate = st.number_input(
+            "Base Raw Rate ($/hr)",
+            min_value=0.0,
+            value=56.0,
+            step=1.0,
+        )
+
+        multiplier = st.number_input(
+            "Multiplier",
+            min_value=0.0,
+            value=3.6,
+            step=0.1,
+            format="%.2f",
+        )
+
+        billing_rate = base_raw_rate * multiplier
 
     # -----------------------------
     # Fee cascade calculations
@@ -125,7 +138,7 @@ def main():
     electrical_target_fee = mep_fee_dollars * pct(electrical_fee_pct)
 
     # -----------------------------
-    # Summary (no st.metric to avoid JS module error)
+    # Summary
     # -----------------------------
     st.subheader("Fee Cascade Summary")
     c1, c2, c3, c4 = st.columns(4)
@@ -146,7 +159,11 @@ def main():
         st.markdown("**Electrical Target Fee ($)**")
         st.write(money(electrical_target_fee))
 
-    st.write(f"**Billing Rate Used:** {money(billing_rate)}/hr")
+    st.write(
+        f"**Base Raw Rate:** {money(base_raw_rate)}/hr  |  "
+        f"**Multiplier:** {multiplier:.2f}  |  "
+        f"**Billing Rate Used:** {money(billing_rate)}/hr"
+    )
 
     # -----------------------------
     # Build & scale workplan
@@ -170,11 +187,12 @@ def main():
 
     st.write(
         f"**Hours scaling factor applied:** `{scale:.3f}`  "
-        f"(Base total fee @ billing rate was {money(base_total_fee)}; scaled to {money(electrical_target_fee)})"
+        f"(Base total fee @ billing rate was {money(base_total_fee)}; "
+        f"scaled to {money(electrical_target_fee)})"
     )
 
     # -----------------------------
-    # Phase dropdowns (expanders)
+    # Phase dropdowns
     # -----------------------------
     st.divider()
     st.subheader("Electrical Detailed Task Plan — Hours & Fees (by Phase)")
