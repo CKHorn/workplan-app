@@ -12,14 +12,12 @@ def pct(x: float) -> float:
     return x / 100.0
 
 def parse_currency(text: str) -> float:
-    """Parse a currency-like string (commas/$ allowed) into a float dollars value (no decimals)."""
     digits = re.sub(r"[^\d]", "", text or "")
     if digits == "":
         raise ValueError("No digits found")
     return float(digits)
 
 def normalize(d: dict) -> dict:
-    """Normalize a dict of weights to sum to 1.0 (ignoring negatives)."""
     total = sum(max(v, 0.0) for v in d.values())
     if total <= 0:
         n = len(d)
@@ -27,10 +25,6 @@ def normalize(d: dict) -> dict:
     return {k: max(v, 0.0) / total for k, v in d.items()}
 
 def build_plan(rows, target_fee: float, rate: float, phase_split: dict) -> pd.DataFrame:
-    """
-    rows: list of tuples (Phase, Task, BaseHours)
-    Allocate target_fee into phases via phase_split; distribute phase hours across tasks proportional to BaseHours.
-    """
     phase_split_n = normalize(phase_split)
     df = pd.DataFrame(rows, columns=["Phase", "Task", "Base"])
 
@@ -41,7 +35,6 @@ def build_plan(rows, target_fee: float, rate: float, phase_split: dict) -> pd.Da
 
         p = df[df["Phase"] == phase].copy()
         if p.empty:
-            # bucket row if a phase has no tasks (keeps phase fee represented)
             p = pd.DataFrame([{"Phase": phase, "Task": f"{phase} - General", "Base": 1.0}])
 
         base_sum = float(p["Base"].sum())
@@ -59,7 +52,7 @@ def build_plan(rows, target_fee: float, rate: float, phase_split: dict) -> pd.Da
     return out_df
 
 # =============================
-# Task lists (restored)
+# Tasks (restored)
 # =============================
 ELECTRICAL = [
     # SD
@@ -96,7 +89,7 @@ ELECTRICAL = [
     ("DD", "Code compliance review", 8),
     ("DD", "DD review & revisions", 14),
 
-    # CD (+ permitting rolled into CD)
+    # CD (+ permitting in CD)
     ("CD", "PM: issue management / meetings (CD)", 10),
     ("CD", "PM: fee & scope tracking (CD)", 6),
     ("CD", "Final unit power plans", 36),
@@ -135,7 +128,6 @@ ELECTRICAL = [
     ("CA", "As-built review", 10),
 ]
 
-# Plumbing tasks with unit-driven items + podium toggle items
 PLUMBING_BASE = [
     # SD
     ("SD", "SAN/VENT - Initial Sizing", 3, None),
@@ -176,7 +168,7 @@ PLUMBING_BASE = [
     ("CD", "Garage Drainage - Isometric", 18, None),
     ("CD", "Misc/Details/Schedules", 18, None),
 
-    # Bidding / CA placeholders
+    # Bidding / CA
     ("Bidding", "Bidding support (Plumbing)", 10, None),
     ("CA", "Submittals / RFIs / site support (Plumbing)", 60, None),
 ]
@@ -204,7 +196,7 @@ def build_plumbing_rows(podium: bool, lux_units: int, typ_units: int, dom_units:
 st.set_page_config(page_title="MEP Work Plan Generator", layout="wide")
 st.title("Electrical + Plumbing / Fire Work Plan Generator — Hours & Fees")
 
-# ---------- Sidebar: global inputs only ----------
+# Sidebar: global inputs only
 with st.sidebar:
     st.header("Construction and % Design Fee Inputs")
 
@@ -216,12 +208,7 @@ with st.sidebar:
         st.error("Construction Cost must contain digits (commas and $ are ok).")
 
     arch_fee_pct = st.number_input("Architectural Fee (%)", min_value=0.0, value=3.5, step=0.1, format="%.2f")
-    mep_fee_pct = st.number_input("Standard MEP Fee (%)", min_value=0.0, value=15.0, step=0.5, format="%.2f")
-
-    st.divider()
-    st.header("Discipline % of MEP Fee")
-    electrical_pct = st.number_input("Electrical (%)", min_value=0.0, value=28.0, step=0.5, format="%.1f")
-    plumbing_fire_pct = st.number_input("Plumbing / Fire (%)", min_value=0.0, value=24.0, step=0.5, format="%.1f")
+    mep_fee_pct = st.number_input("MEP Fee (%)", min_value=0.0, value=15.0, step=0.5, format="%.2f")
 
     st.divider()
     st.header("Rate Inputs")
@@ -229,21 +216,27 @@ with st.sidebar:
     multiplier = st.number_input("Multiplier", min_value=0.0, value=3.6, step=0.1, format="%.2f")
     billing_rate = base_raw_rate * multiplier
 
-# ---------- Phase split row (main page) ----------
+# Phase split row (main page)
 st.subheader("Design Phase Fee % Split")
 c1, c2, c3, c4, c5 = st.columns(5)
-
 sd_pct = c1.number_input("SD (%)", min_value=0.0, value=12.0, step=0.5, format="%.1f")
 dd_pct = c2.number_input("DD (%)", min_value=0.0, value=40.0, step=0.5, format="%.1f")
 cd_pct = c3.number_input("CD (%)", min_value=0.0, value=28.0, step=0.5, format="%.1f")
 bid_pct = c4.number_input("Bidding (%)", min_value=0.0, value=1.5, step=0.1, format="%.1f")
 ca_pct = c5.number_input("CA (%)", min_value=0.0, value=18.5, step=0.5, format="%.1f")
-
 phase_split = {"SD": sd_pct, "DD": dd_pct, "CD": cd_pct, "Bidding": bid_pct, "CA": ca_pct}
-phase_split_n = normalize(phase_split)
-st.caption("Phase split auto-normalizes to 100% if your entries don’t add to 100.")
 
-# ---------- Fee cascade ----------
+st.caption("Phase split auto-normalizes to 100% if entries don’t add to 100.")
+
+# Discipline % inputs moved here (under phase split, above fee summary)
+st.subheader("Discipline % of MEP Fee")
+d1, d2 = st.columns(2)
+with d1:
+    electrical_pct = st.number_input("Electrical (%)", min_value=0.0, value=28.0, step=0.5, format="%.1f")
+with d2:
+    plumbing_fire_pct = st.number_input("Plumbing / Fire (%)", min_value=0.0, value=24.0, step=0.5, format="%.1f")
+
+# Fee cascade
 arch_fee = construction_cost * pct(arch_fee_pct)
 mep_fee = arch_fee * pct(mep_fee_pct)
 
@@ -251,9 +244,9 @@ electrical_target_fee = mep_fee * pct(electrical_pct)
 plumbing_fire_target_fee = mep_fee * pct(plumbing_fire_pct)
 
 fire_fee = plumbing_fire_target_fee * pct(10.0)
-plumbing_fee = plumbing_fire_target_fee - fire_fee  # 90%
+plumbing_fee = plumbing_fire_target_fee - fire_fee
 
-# ---------- Summary (NO st.metric) ----------
+# Fee summary (NO st.metric)
 st.subheader("Design Fee Summary")
 s1, s2, s3, s4, s5 = st.columns(5)
 with s1:
@@ -269,13 +262,12 @@ with s5:
 
 st.write(f"**Billing Rate Used:** {money(billing_rate)}/hr (Base {money(base_raw_rate)}/hr × {multiplier:.2f})")
 
-# ---------- Build Electrical plan ----------
-e_df = build_plan(ELECTRICAL, electrical_target_fee, billing_rate, phase_split)
-
-# ---------- Layout columns ----------
+# Layout columns
 left, right = st.columns(2)
 
-# ---------- Electrical display ----------
+# Electrical plan
+e_df = build_plan(ELECTRICAL, electrical_target_fee, billing_rate, phase_split)
+
 with left:
     st.subheader("Electrical")
 
@@ -291,18 +283,17 @@ with left:
             st.dataframe(show, use_container_width=True, hide_index=True)
 
     st.divider()
-    e_total_hrs = float(e_df["Hours"].sum())
-    e_total_fee = float(e_df["Fee ($)"].sum())
-    st.markdown(f"### ELECTRICAL TOTAL\n**{e_total_hrs:,.1f} hrs** | **{money(e_total_fee)}**")
+    st.markdown(
+        f"### ELECTRICAL TOTAL\n"
+        f"**{float(e_df['Hours'].sum()):,.1f} hrs** | **{money(float(e_df['Fee ($)'].sum()))}**"
+    )
 
-# ---------- Plumbing/Fire display + compact inputs ----------
+# Plumbing/Fire plan with compact inputs under section header
 with right:
     st.subheader("Plumbing / Fire")
 
-    # Compact inputs directly under section header
     st.caption("Inputs")
     pi1, pi2, pi3, pi4 = st.columns([1.1, 1, 1, 1])
-
     with pi1:
         podium = st.checkbox("Include Podium", value=True)
     with pi2:
@@ -315,7 +306,6 @@ with right:
         st.caption("Domestic units")
         dom_units = st.number_input("", min_value=0, value=25, step=1, key="dom_units", label_visibility="collapsed")
 
-    # Build plumbing + fire plans
     p_rows = build_plumbing_rows(podium=podium, lux_units=int(lux_units), typ_units=int(typ_units), dom_units=int(dom_units))
     p_df = build_plan(p_rows, plumbing_fee, billing_rate, phase_split)
 
@@ -336,11 +326,12 @@ with right:
             st.dataframe(show, use_container_width=True, hide_index=True)
 
     st.divider()
-    pf_total_hrs = float(pf_df["Hours"].sum())
-    pf_total_fee = float(pf_df["Fee ($)"].sum())
-    st.markdown(f"### PLUMBING / FIRE TOTAL\n**{pf_total_hrs:,.1f} hrs** | **{money(pf_total_fee)}**")
+    st.markdown(
+        f"### PLUMBING / FIRE TOTAL\n"
+        f"**{float(pf_df['Hours'].sum()):,.1f} hrs** | **{money(float(pf_df['Fee ($)'].sum()))}**"
+    )
 
-    # Optional downloads
     st.divider()
     st.download_button("Download Plumbing/Fire CSV", data=pf_df.to_csv(index=False), file_name="plumbing_fire_work_plan.csv", mime="text/csv")
-    st.download_button("Download Electrical CSV", data=e_df.to_csv(index=False), file_name="electrical_work_plan.csv", mime="text/csv")
+
+st.download_button("Download Electrical CSV", data=e_df.to_csv(index=False), file_name="electrical_work_plan.csv", mime="text/csv")
