@@ -25,11 +25,6 @@ def normalize(d: dict) -> dict:
     return {k: max(v, 0.0) / total for k, v in d.items()}
 
 def build_plan(rows, target_fee: float, rate: float, phase_split: dict) -> pd.DataFrame:
-    """
-    rows: list of tuples (Phase, Task, BaseHours)
-    Allocates target_fee into phases using phase_split (normalized to 100%),
-    then distributes each phase's hours across tasks proportional to BaseHours.
-    """
     phase_split_n = normalize(phase_split)
     df = pd.DataFrame(rows, columns=["Phase", "Task", "Base"])
 
@@ -54,11 +49,9 @@ def build_plan(rows, target_fee: float, rate: float, phase_split: dict) -> pd.Da
     return out_df
 
 # =============================
-# Tasks (Electrical / Plumbing / Mechanical)
+# Tasks
 # =============================
-
 ELECTRICAL = [
-    # SD
     ("SD", "PM: kickoff meetings / coordination", 10),
     ("SD", "PM: schedule tracking", 6),
     ("SD", "PM: client coordination (SD)", 8),
@@ -75,7 +68,6 @@ ELECTRICAL = [
     ("SD", "Basis of Design narrative", 12),
     ("SD", "SD review & revisions", 10),
 
-    # DD
     ("DD", "PM: client coordination (DD)", 8),
     ("DD", "PM: discipline coordination (DD)", 8),
     ("DD", "PM: internal design reviews (DD)", 6),
@@ -92,7 +84,6 @@ ELECTRICAL = [
     ("DD", "Code compliance review", 8),
     ("DD", "DD review & revisions", 14),
 
-    # CD (+ permitting in CD)
     ("CD", "PM: issue management / meetings (CD)", 10),
     ("CD", "PM: fee & scope tracking (CD)", 6),
     ("CD", "Final unit power plans", 36),
@@ -114,13 +105,11 @@ ELECTRICAL = [
     ("CD", "Drawing revisions (permit comments)", 12),
     ("CD", "AHJ coordination", 4),
 
-    # Bidding
     ("Bidding", "Contractor RFIs", 16),
     ("Bidding", "Addenda", 14),
     ("Bidding", "VE reviews", 8),
     ("Bidding", "Bid evaluation support", 8),
 
-    # CA
     ("CA", "PM: CA coordination & reporting", 12),
     ("CA", "Submittal reviews", 34),
     ("CA", "Shop drawings", 20),
@@ -132,7 +121,6 @@ ELECTRICAL = [
 ]
 
 PLUMBING_BASE = [
-    # SD
     ("SD", "SAN/VENT - Initial Sizing", 3, None),
     ("SD", "SAN/VENT - Civil Coordination", 9, None),
     ("SD", "SAN/VENT - Luxury Amenity", 9, None),
@@ -143,7 +131,6 @@ PLUMBING_BASE = [
     ("SD", "Domestic - Initial Sizing", 4, None),
     ("SD", "Domestic - Pump Sizing", 4, None),
 
-    # DD
     ("DD", "SAN/VENT - Potential Equipment Sizing", 18, None),
     ("DD", "STORM - Riser Coordination Luxury", 5, None),
     ("DD", "STORM - Offsets", 4, None),
@@ -155,7 +142,6 @@ PLUMBING_BASE = [
     ("DD", "Domestic - Top Level distribution", 10, None),
     ("DD", "Domestic - Unit Distribution (2 hr/unit)", 50, "dom_units_2hr"),
 
-    # CD
     ("CD", "SAN/VENT - In building Collections", 54, None),
     ("CD", "SAN/VENT - Ground Level Collections", 9, None),
     ("CD", "SAN/VENT - Underground Collections", 18, None),
@@ -171,7 +157,6 @@ PLUMBING_BASE = [
     ("CD", "Garage Drainage - Isometric", 18, None),
     ("CD", "Misc/Details/Schedules", 18, None),
 
-    # Bidding / CA placeholders
     ("Bidding", "Bidding support (Plumbing)", 10, None),
     ("CA", "Submittals / RFIs / site support (Plumbing)", 60, None),
 ]
@@ -181,7 +166,6 @@ def build_plumbing_rows(podium: bool, lux_units: int, typ_units: int, dom_units:
     for phase, task, hrs, tag in PLUMBING_BASE:
         if tag == "podium_only" and not podium:
             continue
-
         base_hrs = float(hrs)
         if tag == "lux_units_4hr":
             base_hrs = float(lux_units) * 4.0
@@ -189,20 +173,16 @@ def build_plumbing_rows(podium: bool, lux_units: int, typ_units: int, dom_units:
             base_hrs = float(typ_units) * 4.0
         elif tag == "dom_units_2hr":
             base_hrs = float(dom_units) * 2.0
-
         rows.append((phase, task, base_hrs))
     return rows
 
-# Mechanical tasks from your image (base hours)
 MECHANICAL = [
-    # SD (total 55)
     ("SD", "Meetings", 12),
     ("SD", "Preliminary load calcs", 18),
     ("SD", "Preliminary sizing/routing", 15),
     ("SD", "SD Narrative", 8),
     ("SD", "QA/QC", 2),
 
-    # DD (total 198)
     ("DD", "Meetings", 20),
     ("DD", "Load calcs", 20),
     ("DD", "Coordination", 10),
@@ -213,7 +193,6 @@ MECHANICAL = [
     ("DD", "Amenity space modeling", 40),
     ("DD", "QA/QC", 8),
 
-    # CD (total 134)
     ("CD", "Meetings", 16),
     ("CD", "Coordination", 10),
     ("CD", "Equipment selection", 10),
@@ -223,25 +202,21 @@ MECHANICAL = [
     ("CD", "Amenity space modeling", 20),
     ("CD", "QA/QC", 8),
 
-    # Bidding/CPS (total 55)
     ("Bidding", "Meetings", 25),
     ("Bidding", "Coordination", 10),
     ("Bidding", "RFI/Submittals", 20),
 
-    # CA (not provided in image; placeholder so fee split can allocate CA)
     ("CA", "CA Support (submittals/RFIs/site)", 60),
 ]
 
 # =============================
-# App UI
+# App
 # =============================
-st.set_page_config(page_title="MEP Work Plan Generator", layout="wide")
-st.title("Electrical + Plumbing / Fire + Mechanical Work Plan Generator — Hours & Fees")
+st.set_page_config(page_title="MEP Fee and Work Plan Generator", layout="wide")
+st.title("MEP Fee and Work Plan Generator")
 
-# Sidebar: global inputs
 with st.sidebar:
     st.header("Construction and % Design Fee Inputs")
-
     cost_raw = st.text_input("Construction Cost ($)", "10,000,000")
     try:
         construction_cost = parse_currency(cost_raw)
@@ -269,7 +244,7 @@ ca_pct = c5.number_input("CA (%)", min_value=0.0, value=18.5, step=0.5, format="
 phase_split = {"SD": sd_pct, "DD": dd_pct, "CD": cd_pct, "Bidding": bid_pct, "CA": ca_pct}
 st.caption("Phase split auto-normalizes to 100% if entries don’t add to 100.")
 
-# Discipline splits (under phase split)
+# Discipline splits
 st.subheader("Discipline % of MEP Fee")
 d1, d2, d3 = st.columns(3)
 with d1:
@@ -287,7 +262,6 @@ electrical_target_fee = mep_fee * pct(electrical_pct)
 plumbing_fire_target_fee = mep_fee * pct(plumbing_fire_pct)
 mechanical_target_fee = mep_fee * pct(mechanical_pct)
 
-# Plumbing/Fire carveout
 fire_fee = plumbing_fire_target_fee * pct(10.0)
 plumbing_fee = plumbing_fire_target_fee - fire_fee
 
@@ -316,7 +290,6 @@ m_df = build_plan(MECHANICAL, mechanical_target_fee, billing_rate, phase_split)
 # 3-column layout
 col_e, col_pf, col_m = st.columns(3)
 
-# Electrical section
 with col_e:
     st.subheader("Electrical")
     for ph in ["SD", "DD", "CD", "Bidding", "CA"]:
@@ -327,17 +300,16 @@ with col_e:
             show = d[["Task", "Hours", "Fee ($)"]].copy()
             show["Fee ($)"] = show["Fee ($)"].apply(lambda v: money(float(v)))
             st.dataframe(show, use_container_width=True, hide_index=True)
-
     st.divider()
     st.markdown(f"### ELECTRICAL TOTAL\n**{float(e_df['Hours'].sum()):,.1f} hrs** | **{money(float(e_df['Fee ($)'].sum()))}**")
     st.download_button("Download Electrical CSV", data=e_df.to_csv(index=False), file_name="electrical_work_plan.csv", mime="text/csv")
 
-# Plumbing/Fire section (with compact inputs)
 with col_pf:
     st.subheader("Plumbing / Fire")
+
+    # compact inputs under section header
     st.caption("Inputs")
     pi1, pi2, pi3, pi4 = st.columns([1.1, 1, 1, 1])
-
     with pi1:
         podium = st.checkbox("Include Podium", value=True)
     with pi2:
@@ -366,12 +338,10 @@ with col_pf:
             show = d[["Task", "Hours", "Fee ($)"]].copy()
             show["Fee ($)"] = show["Fee ($)"].apply(lambda v: money(float(v)))
             st.dataframe(show, use_container_width=True, hide_index=True)
-
     st.divider()
     st.markdown(f"### PLUMBING / FIRE TOTAL\n**{float(pf_df['Hours'].sum()):,.1f} hrs** | **{money(float(pf_df['Fee ($)'].sum()))}**")
     st.download_button("Download Plumbing/Fire CSV", data=pf_df.to_csv(index=False), file_name="plumbing_fire_work_plan.csv", mime="text/csv")
 
-# Mechanical section
 with col_m:
     st.subheader("Mechanical")
     for ph in ["SD", "DD", "CD", "Bidding", "CA"]:
@@ -382,7 +352,6 @@ with col_m:
             show = d[["Task", "Hours", "Fee ($)"]].copy()
             show["Fee ($)"] = show["Fee ($)"].apply(lambda v: money(float(v)))
             st.dataframe(show, use_container_width=True, hide_index=True)
-
     st.divider()
     st.markdown(f"### MECHANICAL TOTAL\n**{float(m_df['Hours'].sum()):,.1f} hrs** | **{money(float(m_df['Fee ($)'].sum()))}**")
     st.download_button("Download Mechanical CSV", data=m_df.to_csv(index=False), file_name="mechanical_work_plan.csv", mime="text/csv")
