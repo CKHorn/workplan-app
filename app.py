@@ -135,7 +135,7 @@ def recalc_area_df(df_in: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     df["Total Cost"] = df["Area (SF)"] * df["$/SF"]
     return df, missing_defaults
 
-def style_preview(df: pd.DataFrame) -> pd.io.formats.style.Styler:
+def style_preview(df: pd.DataFrame):
     input_cols = ["Space Name", "Space Type", "Area (SF)", "Override $/SF?", "$/SF", "Notes"]
     computed_cols = ["Total Cost"]
 
@@ -710,3 +710,4 @@ with col_m:
             st.dataframe(show, use_container_width=True, hide_index=True)
     st.divider()
     st.markdown(f"### MECHANICAL TOTAL\n**{float(m_df['Hours'].sum()):,.1f} hrs** | **{money(float(m_df['Fee ($)'].sum()))}**")
+
