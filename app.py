@@ -288,20 +288,23 @@ def mechanical_defaults_df():
 
 def build_plumbing_task_df(lib_df: pd.DataFrame, podium: bool, lux_units: int, typ_units: int, dom_units: int) -> pd.DataFrame:
     df = lib_df.copy()
+
+    # --- SAFETY: ensure expected columns exist ---
+    if "Tag" not in df.columns:
+        df["Tag"] = ""
+    if "Enabled" not in df.columns:
+        df["Enabled"] = True
+    if "BaseHours" not in df.columns:
+        df["BaseHours"] = 0.0
+    if "Phase" not in df.columns:
+        df["Phase"] = "SD"
+    if "Task" not in df.columns:
+        df["Task"] = ""
+
     df["Enabled"] = df["Enabled"].astype(bool)
     df = df[df["Enabled"]].copy()
-    if df.empty:
-        return pd.DataFrame([{"Phase":"SD","Task":"No plumbing tasks enabled","BaseHours":1.0,"Enabled":True}])
+    ...
 
-    df["BaseHours"] = pd.to_numeric(df["BaseHours"], errors="coerce").fillna(0.0)
-    df["Tag"] = df["Tag"].fillna("").astype(str)
-
-    rows = []
-    for _, r in df.iterrows():
-        tag = r["Tag"].strip()
-        ph = r["Phase"]
-        task = r["Task"]
-        base = float(r["BaseHours"])
 
         if tag == "podium_only":
             if not podium:
@@ -564,3 +567,4 @@ with col_pf:
     render_section("Plumbing / Fire", pf_plan)
 with col_m:
     render_section("Mechanical", m_plan)
+
