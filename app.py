@@ -3,11 +3,11 @@ import re
 import streamlit as st
 import pandas as pd
 
+PHASES = ["SD", "DD", "CD", "Bidding", "CA"]
+
 # =========================================================
 # Helpers
 # =========================================================
-PHASES = ["SD", "DD", "CD", "Bidding", "CA"]
-
 def money(x: float) -> str:
     return f"${x:,.0f}"
 
@@ -18,12 +18,6 @@ def normalize(weights: dict) -> dict:
         return {k: 1.0 / n for k in weights}
     return {k: max(v, 0.0) / total for k, v in weights.items()}
 
-def parse_currency(text: str) -> float:
-    digits = re.sub(r"[^\d]", "", text or "")
-    if digits == "":
-        raise ValueError("No digits found")
-    return float(digits)
-
 def safe_num(x, default=0.0):
     try:
         return float(x)
@@ -31,14 +25,8 @@ def safe_num(x, default=0.0):
         return default
 
 def build_plan_from_library(task_df: pd.DataFrame, target_fee: float, rate: float, phase_split: dict) -> pd.DataFrame:
-    """
-    task_df columns required: Phase, Task, BaseHours, Enabled
-    Uses BaseHours as weights within each phase, and scales to match phase fee.
-    """
     phase_split_n = normalize(phase_split)
     df = task_df.copy()
-
-    # Filter enabled only
     df = df[df.get("Enabled", True) == True].copy()
     if df.empty:
         df = pd.DataFrame([{"Phase": "SD", "Task": "No tasks enabled", "BaseHours": 1.0, "Enabled": True}])
@@ -57,7 +45,6 @@ def build_plan_from_library(task_df: pd.DataFrame, target_fee: float, rate: floa
         base_sum = float(p["BaseHours"].sum())
         p["Hours"] = (p["BaseHours"] / base_sum * phase_hours) if base_sum > 0 else 0.0
         p["Fee ($)"] = p["Hours"] * rate
-
         out.append(p[["Phase", "Task", "Hours", "Fee ($)"]])
 
     out_df = pd.concat(out, ignore_index=True)
@@ -66,7 +53,7 @@ def build_plan_from_library(task_df: pd.DataFrame, target_fee: float, rate: floa
     return out_df
 
 # =========================================================
-# $/SF Lookup + Complexity
+# $/SF Lookup (Space Type -> $/SF)
 # =========================================================
 RATE_LOOKUP = {
     "Office (Fitout / Renovation)": 1.50,
@@ -82,7 +69,7 @@ RATE_LOOKUP = {
     "Parking (Enclosed)": 0.45,
     "Multifamily (Garden Style)": 0.85,
     "Multifamily (High Rise)": 1.01,
-    # Typically override:
+    # These need override
     "Site Lighting": None,
     "Site Parking": None,
     "BOH Rooms": 0.75,
@@ -94,13 +81,7 @@ RATE_LOOKUP = {
 }
 SPACE_TYPES = list(RATE_LOOKUP.keys())
 
-COMPLEXITY = {
-    "Low": 0.85,
-    "Standard": 1.00,
-    "High": 1.15,
-}
-
-def new_space_row(space_type=None, space_name="", area=0, mult=1.0, complexity="Standard"):
+def new_space_row(space_type=None, space_name="", area=0):
     if space_type is None:
         space_type = SPACE_TYPES[0]
     return {
@@ -109,33 +90,29 @@ def new_space_row(space_type=None, space_name="", area=0, mult=1.0, complexity="
         "Space Name": space_name,
         "Space Type": space_type,
         "Area (SF)": int(area),
-        "Complexity": complexity,
         "$/SF": 0.0,
-        "Multiplier": float(mult),
         "Total Cost": 0.0,
         "Notes": "",
     }
 
 def build_default_area_df():
-    # Different example space types (as requested)
     examples = [
-        ("Amenity Areas", "Amenities", 18000, 1.00, "Standard"),
-        ("BOH Rooms", "Back of House", 14000, 1.00, "Standard"),
-        ("Retail (Core & Shell Restaurant)", "Retail", 5000, 1.00, "High"),
-        ("Office (Core & Shell)", "Office", 4500, 1.00, "Standard"),
-        ("Parking (Enclosed)", "Parking", 80000, 1.00, "Low"),
-        ("Multifamily (High Rise)", "Residential", 175000, 1.00, "Standard"),
-        ("Restaurant (Kitchen / Dining Areas)", "Restaurant", 3000, 1.00, "High"),
-        ("Site Lighting", "Site Lighting (override)", 0, 1.00, "Standard"),
+        ("Amenity Areas", "Amenities", 18000),
+        ("BOH Rooms", "Back of House", 14000),
+        ("Retail (Core & Shell Restaurant)", "Retail", 5000),
+        ("Office (Core & Shell)", "Office", 4500),
+        ("Parking (Enclosed)", "Parking", 80000),
+        ("Multifamily (High Rise)", "Residential", 175000),
+        ("Restaurant (Kitchen / Dining Areas)", "Restaurant", 3000),
+        ("Site Lighting", "Site Lighting (override)", 0),
     ]
-    return pd.DataFrame([new_space_row(t, n, a, m, cx) for t, n, a, m, cx in examples])
+    return pd.DataFrame([new_space_row(t, n, a) for t, n, a in examples])
 
 # =========================================================
-# Default Task Libraries (Editable)
+# Default Task Libraries (same as before)
 # =========================================================
 def electrical_defaults_df():
     tasks = [
-        # SD
         ("SD","PM: kickoff meetings / coordination",10),
         ("SD","PM: schedule tracking",6),
         ("SD","PM: client coordination (SD)",8),
@@ -152,7 +129,6 @@ def electrical_defaults_df():
         ("SD","Basis of Design narrative",12),
         ("SD","SD review & revisions",10),
 
-        # DD
         ("DD","PM: client coordination (DD)",8),
         ("DD","PM: discipline coordination (DD)",8),
         ("DD","PM: internal design reviews (DD)",6),
@@ -169,7 +145,6 @@ def electrical_defaults_df():
         ("DD","Code compliance review",8),
         ("DD","DD review & revisions",14),
 
-        # CD (+ permitting in CD)
         ("CD","PM: issue management / meetings (CD)",10),
         ("CD","PM: fee & scope tracking (CD)",6),
         ("CD","Final unit power plans",36),
@@ -191,13 +166,11 @@ def electrical_defaults_df():
         ("CD","Drawing revisions (permit comments)",12),
         ("CD","AHJ coordination",4),
 
-        # Bidding
         ("Bidding","Contractor RFIs",16),
         ("Bidding","Addenda",14),
         ("Bidding","VE reviews",8),
         ("Bidding","Bid evaluation support",8),
 
-        # CA
         ("CA","PM: CA coordination & reporting",12),
         ("CA","Submittal reviews",34),
         ("CA","Shop drawings",20),
@@ -211,16 +184,10 @@ def electrical_defaults_df():
     df["Enabled"] = True
     return df[["Phase","Task","BaseHours","Enabled"]]
 
-# Plumbing is editable too, including Tags for dynamic hours.
 PLUMBING_TAGS = ["", "lux_units_4hr", "typ_units_4hr", "dom_units_2hr", "podium_only"]
 
 def plumbing_defaults_df():
-    # For tagged rows:
-    # - lux_units_4hr / typ_units_4hr: BaseHours = hours per unit (default 4)
-    # - dom_units_2hr: BaseHours = hours per unit (default 2)
-    # - podium_only: BaseHours = hours used if podium included (default as shown)
     tasks = [
-        # SD
         ("SD","SAN/VENT - Initial Sizing",3,""),
         ("SD","SAN/VENT - Civil Coordination",9,""),
         ("SD","SAN/VENT - Luxury Amenity",9,""),
@@ -231,7 +198,6 @@ def plumbing_defaults_df():
         ("SD","Domestic - Initial Sizing",4,""),
         ("SD","Domestic - Pump Sizing",4,""),
 
-        # DD
         ("DD","SAN/VENT - Potential Equipment Sizing",18,""),
         ("DD","STORM - Riser Coordination Luxury",5,""),
         ("DD","STORM - Offsets",4,""),
@@ -243,7 +209,6 @@ def plumbing_defaults_df():
         ("DD","Domestic - Top Level distribution",10,""),
         ("DD","Domestic - Unit Distribution (hr/unit)",2,"dom_units_2hr"),
 
-        # CD
         ("CD","SAN/VENT - In building Collections",54,""),
         ("CD","SAN/VENT - Ground Level Collections",9,""),
         ("CD","SAN/VENT - Underground Collections",18,""),
@@ -259,7 +224,6 @@ def plumbing_defaults_df():
         ("CD","Garage Drainage - Isometric",18,""),
         ("CD","Misc/Details/Schedules",18,""),
 
-        # Bidding / CA
         ("Bidding","Bidding support (Plumbing)",10,""),
         ("CA","Submittals / RFIs / site support (Plumbing)",60,""),
     ]
@@ -304,9 +268,6 @@ def mechanical_defaults_df():
     df["Enabled"] = True
     return df[["Phase","Task","BaseHours","Enabled"]]
 
-# =========================================================
-# Plumbing plan builder (from editable library with tags)
-# =========================================================
 def build_plumbing_task_df_from_library(lib_df: pd.DataFrame, podium: bool, lux_units: int, typ_units: int, dom_units: int):
     df = lib_df.copy()
     df = df[df.get("Enabled", True) == True].copy()
@@ -326,7 +287,6 @@ def build_plumbing_task_df_from_library(lib_df: pd.DataFrame, podium: bool, lux_
         if tag == "podium_only":
             if not podium:
                 continue
-            # base is podium hours
             rows.append({"Phase": ph, "Task": task, "BaseHours": base, "Enabled": True})
         elif tag == "lux_units_4hr":
             rows.append({"Phase": ph, "Task": task, "BaseHours": base * float(lux_units), "Enabled": True})
@@ -343,7 +303,7 @@ def build_plumbing_task_df_from_library(lib_df: pd.DataFrame, podium: bool, lux_
     return out[["Phase","Task","BaseHours","Enabled"]]
 
 # =========================================================
-# Preset Save/Load
+# Presets (JSON)
 # =========================================================
 def export_preset() -> str:
     preset = {
@@ -365,7 +325,6 @@ def export_preset() -> str:
             "typ_units": st.session_state.get("typ_units", 12),
             "dom_units": st.session_state.get("dom_units", 25),
         },
-        "scope_toggles": st.session_state.get("scope_toggles", {}),
         "area_df": st.session_state.get("area_df", build_default_area_df()).to_dict(orient="list"),
         "tasks": {
             "electrical": st.session_state.get("electrical_lib", electrical_defaults_df()).to_dict(orient="list"),
@@ -396,13 +355,8 @@ def load_preset_from_json(text: str):
     st.session_state["typ_units"] = int(safe_num(p_in.get("typ_units", 12), 12))
     st.session_state["dom_units"] = int(safe_num(p_in.get("dom_units", 25), 25))
 
-    st.session_state["scope_toggles"] = preset.get("scope_toggles", {})
-
     area_dict = preset.get("area_df", None)
-    if area_dict:
-        st.session_state["area_df"] = pd.DataFrame(area_dict)
-    else:
-        st.session_state["area_df"] = build_default_area_df()
+    st.session_state["area_df"] = pd.DataFrame(area_dict) if area_dict else build_default_area_df()
 
     tasks = preset.get("tasks", {})
     if "electrical" in tasks:
@@ -413,77 +367,29 @@ def load_preset_from_json(text: str):
         st.session_state["mechanical_lib"] = pd.DataFrame(tasks["mechanical"])
 
 # =========================================================
-# Scope Toggles (quick group switches)
-# =========================================================
-ELECTRICAL_GROUPS = {
-    "Include EV Charging tasks": ["EV charging"],
-    "Include Emergency / Life Safety tasks": ["Emergency / life safety", "Life safety"],
-    "Include Permitting / AHJ tasks": ["Permit", "Plan check", "AHJ", "Comment responses", "Drawing revisions (permit"],
-}
-
-MECH_GROUPS = {
-    "Include Unit modeling tasks": ["Unit modeling"],
-    "Include Amenity modeling tasks": ["Amenity space modeling"],
-    "Include QA/QC tasks": ["QA/QC"],
-}
-
-PLUMB_GROUPS = {
-    "Include Grease/Derm tasks": ["Derm Grease", "Grease"],
-    "Include Garage Drainage tasks": ["Garage Drainage"],
-}
-
-def apply_scope_toggles_to_lib(lib_df: pd.DataFrame, groups: dict, toggles_state: dict) -> pd.DataFrame:
-    """
-    If a toggle is False, disable tasks containing those keywords.
-    If True, enable tasks containing those keywords (doesn't override manual disables outside group keywords).
-    """
-    df = lib_df.copy()
-    if "Enabled" not in df.columns:
-        df["Enabled"] = True
-
-    for toggle_name, keywords in groups.items():
-        on = bool(toggles_state.get(toggle_name, True))
-        mask = False
-        for kw in keywords:
-            mask = mask | df["Task"].astype(str).str.contains(kw, case=False, regex=False)
-        if not on:
-            df.loc[mask, "Enabled"] = False
-        else:
-            # only re-enable those tasks if user hasn't explicitly disabled them via editor?
-            # We'll re-enable to match toggle intent.
-            df.loc[mask, "Enabled"] = True
-
-    return df
-
-# =========================================================
 # App
 # =========================================================
 st.set_page_config(page_title="MEP Fee and Work Plan Generator", layout="wide")
 st.title("MEP Fee and Work Plan Generator")
 
-# ---------- Initialize state ----------
+# Initialize state
 if "area_df" not in st.session_state:
     st.session_state["area_df"] = build_default_area_df()
-
 if "electrical_lib" not in st.session_state:
     st.session_state["electrical_lib"] = electrical_defaults_df()
-
 if "plumbing_lib" not in st.session_state:
     st.session_state["plumbing_lib"] = plumbing_defaults_df()
-
 if "mechanical_lib" not in st.session_state:
     st.session_state["mechanical_lib"] = mechanical_defaults_df()
 
 if "phase_split" not in st.session_state:
     st.session_state["phase_split"] = {"SD":12.0,"DD":40.0,"CD":28.0,"Bidding":1.5,"CA":18.5}
-
 if "electrical_pct" not in st.session_state:
     st.session_state["electrical_pct"] = 28.0
 if "plumbing_fire_pct" not in st.session_state:
     st.session_state["plumbing_fire_pct"] = 24.0
 if "mechanical_pct" not in st.session_state:
     st.session_state["mechanical_pct"] = 48.0
-
 if "auto_balance" not in st.session_state:
     st.session_state["auto_balance"] = True
 
@@ -501,15 +407,7 @@ if "typ_units" not in st.session_state:
 if "dom_units" not in st.session_state:
     st.session_state["dom_units"] = 25
 
-if "scope_toggles" not in st.session_state:
-    # default everything ON
-    st.session_state["scope_toggles"] = {
-        **{k: True for k in ELECTRICAL_GROUPS.keys()},
-        **{k: True for k in PLUMB_GROUPS.keys()},
-        **{k: True for k in MECH_GROUPS.keys()},
-    }
-
-# ---------- Sidebar: Presets + Rates ----------
+# Sidebar
 with st.sidebar:
     st.header("Presets")
     up = st.file_uploader("Load preset (JSON)", type=["json"])
@@ -530,15 +428,18 @@ with st.sidebar:
 
     st.divider()
     st.header("Rate Inputs")
-    st.session_state["base_raw_rate"] = st.number_input("Base Raw Rate ($/hr)", min_value=0.0, value=float(st.session_state["base_raw_rate"]), step=1.0)
-    st.session_state["multiplier"] = st.number_input("Multiplier", min_value=0.0, value=float(st.session_state["multiplier"]), step=0.1, format="%.2f")
+    st.session_state["base_raw_rate"] = st.number_input(
+        "Base Raw Rate ($/hr)", min_value=0.0, value=float(st.session_state["base_raw_rate"]), step=1.0
+    )
+    st.session_state["multiplier"] = st.number_input(
+        "Multiplier", min_value=0.0, value=float(st.session_state["multiplier"]), step=0.1, format="%.2f"
+    )
 
 billing_rate = float(st.session_state["base_raw_rate"]) * float(st.session_state["multiplier"])
 
-# ---------- Phase Split ----------
+# Phase split
 st.subheader("Design Phase Fee % Split")
 p1, p2, p3, p4, p5 = st.columns(5)
-
 ps = st.session_state["phase_split"]
 ps["SD"] = p1.number_input("SD (%)", min_value=0.0, value=float(ps.get("SD", 12.0)), step=0.5, format="%.1f")
 ps["DD"] = p2.number_input("DD (%)", min_value=0.0, value=float(ps.get("DD", 40.0)), step=0.5, format="%.1f")
@@ -548,7 +449,7 @@ ps["CA"] = p5.number_input("CA (%)", min_value=0.0, value=float(ps.get("CA", 18.
 st.session_state["phase_split"] = ps
 st.caption("Phase split auto-normalizes to 100% if entries don’t add to 100.")
 
-# ---------- Discipline Split + Auto-balance ----------
+# Discipline splits
 st.subheader("Discipline % of MEP Fee")
 d1, d2, d3, d4 = st.columns([1, 1, 1, 1.2])
 
@@ -560,7 +461,6 @@ with d1:
 with d2:
     st.session_state["plumbing_fire_pct"] = st.number_input("Plumbing / Fire (%)", min_value=0.0, value=float(st.session_state["plumbing_fire_pct"]), step=0.5, format="%.1f")
 
-# Mechanical percent is either remainder (auto) or editable
 if st.session_state["auto_balance"]:
     remainder = max(0.0, 100.0 - float(st.session_state["electrical_pct"]) - float(st.session_state["plumbing_fire_pct"]))
     st.session_state["mechanical_pct"] = remainder
@@ -570,61 +470,29 @@ else:
     with d3:
         st.session_state["mechanical_pct"] = st.number_input("Mechanical (%)", min_value=0.0, value=float(st.session_state["mechanical_pct"]), step=0.5, format="%.1f")
 
-# ---------- Scope Toggles ----------
-with st.expander("Scope Toggles (quick switches)"):
-    st.caption("These switch related tasks on/off while keeping your detailed task library intact.")
-    tcol1, tcol2, tcol3 = st.columns(3)
-
-    with tcol1:
-        st.markdown("**Electrical**")
-        for k in ELECTRICAL_GROUPS.keys():
-            st.session_state["scope_toggles"][k] = st.checkbox(k, value=bool(st.session_state["scope_toggles"].get(k, True)), key=f"tog_{k}")
-
-    with tcol2:
-        st.markdown("**Plumbing / Fire**")
-        for k in PLUMB_GROUPS.keys():
-            st.session_state["scope_toggles"][k] = st.checkbox(k, value=bool(st.session_state["scope_toggles"].get(k, True)), key=f"tog_{k}")
-
-    with tcol3:
-        st.markdown("**Mechanical**")
-        for k in MECH_GROUPS.keys():
-            st.session_state["scope_toggles"][k] = st.checkbox(k, value=bool(st.session_state["scope_toggles"].get(k, True)), key=f"tog_{k}")
-
-# ---------- Compute area-based MEP fee (later, but we show summary first) ----------
+# Fee summary header
 st.subheader("Design Fee Summary")
 
-# We'll compute area fee after area table; placeholder value:
-area_mep_fee = 0.0
-
-# ---------- Area Calculator under Fee Summary ----------
+# =========================================================
+# Area-Based Fee Calculator (UNDER summary)
+# =========================================================
 st.markdown("#### Area-Based Fee Calculator (Drives MEP Fee)")
-
 c1, c2, c3 = st.columns([1, 1, 2])
 with c1:
     if st.button("➕ Add Row"):
-        st.session_state["area_df"] = pd.concat([st.session_state["area_df"], pd.DataFrame([new_space_row(space_type=SPACE_TYPES[min(1, len(SPACE_TYPES)-1)])])], ignore_index=True)
+        st.session_state["area_df"] = pd.concat([st.session_state["area_df"], pd.DataFrame([new_space_row(space_type=SPACE_TYPES[0])])], ignore_index=True)
 with c2:
     if st.button("🗑️ Delete Checked Rows"):
         df_del = st.session_state["area_df"].copy()
         df_del = df_del[df_del["Delete?"] != True].reset_index(drop=True)
         st.session_state["area_df"] = df_del
 with c3:
-    st.caption("Override $/SF? unchecked = lookup. Complexity multiplies that row’s total.")
+    st.caption("$/SF auto-fills from Space Type unless Override $/SF? is checked.")
 
-# Pre-calc before editor (so it looks right immediately)
+# Pre-calc
 df = st.session_state["area_df"].copy()
-
-for col in ["Area (SF)", "$/SF", "Multiplier"]:
-    df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
-
-# --- Complexity column (robust for older presets / older session state) ---
-if "Complexity" not in df.columns:
-    df["Complexity"] = "Standard"
-else:
-    df["Complexity"] = df["Complexity"].fillna("Standard").astype(str)
-
-df.loc[~df["Complexity"].isin(COMPLEXITY.keys()), "Complexity"] = "Standard"
-
+df["Area (SF)"] = pd.to_numeric(df["Area (SF)"], errors="coerce").fillna(0.0)
+df["$/SF"] = pd.to_numeric(df["$/SF"], errors="coerce").fillna(0.0)
 
 missing_defaults = []
 for i, row in df.iterrows():
@@ -638,7 +506,7 @@ for i, row in df.iterrows():
         else:
             df.loc[i, "$/SF"] = float(lookup)
 
-df["Total Cost"] = df["Area (SF)"] * df["$/SF"] * df["Multiplier"] * df["Complexity"].map(COMPLEXITY)
+df["Total Cost"] = df["Area (SF)"] * df["$/SF"]
 st.session_state["area_df"] = df
 
 edited = st.data_editor(
@@ -651,28 +519,17 @@ edited = st.data_editor(
         "Space Name": st.column_config.TextColumn(width="medium"),
         "Space Type": st.column_config.SelectboxColumn(options=SPACE_TYPES, width="medium"),
         "Area (SF)": st.column_config.NumberColumn(min_value=0, step=1, format="%d", width="small"),
-        "Complexity": st.column_config.SelectboxColumn(options=list(COMPLEXITY.keys()), width="small"),
         "$/SF": st.column_config.NumberColumn(min_value=0.0, step=0.05, format="%.2f", width="small"),
-        "Multiplier": st.column_config.NumberColumn(min_value=0.0, step=0.05, format="%.2f", width="small"),
         "Total Cost": st.column_config.NumberColumn(format="%.0f", disabled=True, width="small"),
         "Notes": st.column_config.TextColumn(width="large"),
     },
     key="area_editor",
 )
 
-# Re-apply lookup + recalc so overrides behave correctly
+# Re-apply auto-fill after edits
 df2 = edited.copy()
-for col in ["Area (SF)", "$/SF", "Multiplier"]:
-    df2[col] = pd.to_numeric(df2[col], errors="coerce").fillna(0.0)
-
-# --- Complexity column (robust for older presets / older session state) ---
-if "Complexity" not in df2.columns:
-    df2["Complexity"] = "Standard"
-else:
-    df2["Complexity"] = df2["Complexity"].fillna("Standard").astype(str)
-
-df2.loc[~df2["Complexity"].isin(COMPLEXITY.keys()), "Complexity"] = "Standard"
-
+df2["Area (SF)"] = pd.to_numeric(df2["Area (SF)"], errors="coerce").fillna(0.0)
+df2["$/SF"] = pd.to_numeric(df2["$/SF"], errors="coerce").fillna(0.0)
 
 missing_defaults = []
 for i, row in df2.iterrows():
@@ -686,7 +543,7 @@ for i, row in df2.iterrows():
         else:
             df2.loc[i, "$/SF"] = float(lookup)
 
-df2["Total Cost"] = df2["Area (SF)"] * df2["$/SF"] * df2["Multiplier"] * df2["Complexity"].map(COMPLEXITY)
+df2["Total Cost"] = df2["Area (SF)"] * df2["$/SF"]
 st.session_state["area_df"] = df2
 
 area_mep_fee = float(df2["Total Cost"].sum())
@@ -702,7 +559,9 @@ with st.expander("View $/SF Lookup Table"):
     lookup_df = pd.DataFrame([{"Space Type": k, "$/SF": ("" if v is None else v)} for k, v in RATE_LOOKUP.items()])
     st.dataframe(lookup_df, use_container_width=True, hide_index=True)
 
-# ---------- Summary numbers (now that MEP fee is known) ----------
+# =========================================================
+# Fee split results (uses area_mep_fee)
+# =========================================================
 electrical_target_fee = area_mep_fee * (float(st.session_state["electrical_pct"]) / 100.0)
 plumbing_fire_target_fee = area_mep_fee * (float(st.session_state["plumbing_fire_pct"]) / 100.0)
 mechanical_target_fee = area_mep_fee * (float(st.session_state["mechanical_pct"]) / 100.0)
@@ -725,113 +584,34 @@ with s5:
 st.write(f"**Billing Rate Used:** {money(billing_rate)}/hr (Base {money(st.session_state['base_raw_rate'])}/hr × {st.session_state['multiplier']:.2f})")
 
 # =========================================================
-# Editable Task Libraries (disable-only)
-# =========================================================
-with st.expander("Edit Task Libraries (disable-only, detailed)"):
-    tabs = st.tabs(["Electrical Tasks", "Plumbing/Fire Tasks", "Mechanical Tasks"])
-
-    # Electrical
-    with tabs[0]:
-        st.caption("You can disable tasks or adjust BaseHours (weights). Totals will still match fee targets.")
-        elec_lib = st.session_state["electrical_lib"].copy()
-        # Apply scope toggles to reflect quick switches
-        elec_lib = apply_scope_toggles_to_lib(elec_lib, ELECTRICAL_GROUPS, st.session_state["scope_toggles"])
-
-        edited_e = st.data_editor(
-            elec_lib,
-            num_rows="dynamic",
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Phase": st.column_config.SelectboxColumn(options=PHASES, width="small"),
-                "Task": st.column_config.TextColumn(width="large"),
-                "BaseHours": st.column_config.NumberColumn(min_value=0.0, step=1.0, format="%.1f", width="small"),
-                "Enabled": st.column_config.CheckboxColumn(width="small"),
-            },
-            key="edit_electrical_lib",
-        )
-        st.session_state["electrical_lib"] = edited_e
-
-    # Plumbing
-    with tabs[1]:
-        st.caption("Plumbing supports tags for dynamic rows (units/podium). Disable tasks or adjust BaseHours.")
-        st.caption("Tags: lux_units_4hr, typ_units_4hr, dom_units_2hr, podium_only (leave blank for fixed hours).")
-
-        pl_lib = st.session_state["plumbing_lib"].copy()
-        pl_lib = apply_scope_toggles_to_lib(pl_lib, PLUMB_GROUPS, st.session_state["scope_toggles"])
-
-        edited_p = st.data_editor(
-            pl_lib,
-            num_rows="dynamic",
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Phase": st.column_config.SelectboxColumn(options=PHASES, width="small"),
-                "Task": st.column_config.TextColumn(width="large"),
-                "BaseHours": st.column_config.NumberColumn(min_value=0.0, step=1.0, format="%.1f", width="small"),
-                "Tag": st.column_config.SelectboxColumn(options=PLUMBING_TAGS, width="small"),
-                "Enabled": st.column_config.CheckboxColumn(width="small"),
-            },
-            key="edit_plumbing_lib",
-        )
-        st.session_state["plumbing_lib"] = edited_p
-
-    # Mechanical
-    with tabs[2]:
-        st.caption("Mechanical: disable tasks or adjust BaseHours (weights).")
-        mech_lib = st.session_state["mechanical_lib"].copy()
-        mech_lib = apply_scope_toggles_to_lib(mech_lib, MECH_GROUPS, st.session_state["scope_toggles"])
-
-        edited_m = st.data_editor(
-            mech_lib,
-            num_rows="dynamic",
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Phase": st.column_config.SelectboxColumn(options=PHASES, width="small"),
-                "Task": st.column_config.TextColumn(width="large"),
-                "BaseHours": st.column_config.NumberColumn(min_value=0.0, step=1.0, format="%.1f", width="small"),
-                "Enabled": st.column_config.CheckboxColumn(width="small"),
-            },
-            key="edit_mechanical_lib",
-        )
-        st.session_state["mechanical_lib"] = edited_m
-
-# =========================================================
-# Work Plans
+# Work Plan Generator (tasks retained)
 # =========================================================
 st.divider()
 st.subheader("Work Plan Generator")
 
-# Plumbing inputs (compact, under section)
+# Electrical
+e_df = build_plan_from_library(st.session_state["electrical_lib"], electrical_target_fee, billing_rate, st.session_state["phase_split"])
+
+# Mechanical
+m_df = build_plan_from_library(st.session_state["mechanical_lib"], mechanical_target_fee, billing_rate, st.session_state["phase_split"])
+
 col_e, col_pf, col_m = st.columns(3)
-
-# Build Electrical plan
-elec_lib_effective = apply_scope_toggles_to_lib(st.session_state["electrical_lib"], ELECTRICAL_GROUPS, st.session_state["scope_toggles"])
-e_df = build_plan_from_library(elec_lib_effective, electrical_target_fee, billing_rate, st.session_state["phase_split"])
-
-# Build Mechanical plan
-mech_lib_effective = apply_scope_toggles_to_lib(st.session_state["mechanical_lib"], MECH_GROUPS, st.session_state["scope_toggles"])
-m_df = build_plan_from_library(mech_lib_effective, mechanical_target_fee, billing_rate, st.session_state["phase_split"])
 
 with col_e:
     st.subheader("Electrical")
     for ph in PHASES:
-        d = e_df[e_df["Phase"] == ph].copy()
+        d = e_df[e_df["Phase"] == ph]
         hrs = float(d["Hours"].sum())
         fee = float(d["Fee ($)"].sum())
         with st.expander(f"{ph} — {hrs:,.1f} hrs | {money(fee)}", expanded=False):
             show = d[["Task", "Hours", "Fee ($)"]].copy()
             show["Fee ($)"] = show["Fee ($)"].apply(lambda v: money(float(v)))
             st.dataframe(show, use_container_width=True, hide_index=True)
-
     st.divider()
     st.markdown(f"### ELECTRICAL TOTAL\n**{float(e_df['Hours'].sum()):,.1f} hrs** | **{money(float(e_df['Fee ($)'].sum()))}**")
 
 with col_pf:
     st.subheader("Plumbing / Fire")
-
-    # Plumbing inputs (persisted for presets)
     st.caption("Inputs")
     pi1, pi2, pi3, pi4 = st.columns([1.1, 1, 1, 1])
     with pi1:
@@ -846,26 +626,21 @@ with col_pf:
         st.caption("Domestic units")
         st.session_state["dom_units"] = st.number_input("", min_value=0, value=int(st.session_state["dom_units"]), step=1, label_visibility="collapsed")
 
-    # Plumbing library -> computed base hours with tags
-    pl_lib_effective = apply_scope_toggles_to_lib(st.session_state["plumbing_lib"], PLUMB_GROUPS, st.session_state["scope_toggles"])
     p_base_df = build_plumbing_task_df_from_library(
-        pl_lib_effective,
+        st.session_state["plumbing_lib"],
         podium=bool(st.session_state["podium"]),
         lux_units=int(st.session_state["lux_units"]),
         typ_units=int(st.session_state["typ_units"]),
         dom_units=int(st.session_state["dom_units"]),
     )
 
-    # Scale Plumbing (90% of P/F) + Fire (10% of P/F)
     p_df = build_plan_from_library(p_base_df, plumbing_fee, billing_rate, st.session_state["phase_split"])
-
     fire_lib = pd.DataFrame([{"Phase": ph, "Task": "Fire Protection", "BaseHours": 1.0, "Enabled": True} for ph in PHASES])
     f_df = build_plan_from_library(fire_lib, fire_fee, billing_rate, st.session_state["phase_split"])
-
     pf_df = pd.concat([p_df, f_df], ignore_index=True)
 
     for ph in PHASES:
-        d = pf_df[pf_df["Phase"] == ph].copy()
+        d = pf_df[pf_df["Phase"] == ph]
         hrs = float(d["Hours"].sum())
         fee = float(d["Fee ($)"].sum())
         with st.expander(f"{ph} — {hrs:,.1f} hrs | {money(fee)}", expanded=False):
@@ -879,50 +654,12 @@ with col_pf:
 with col_m:
     st.subheader("Mechanical")
     for ph in PHASES:
-        d = m_df[m_df["Phase"] == ph].copy()
+        d = m_df[m_df["Phase"] == ph]
         hrs = float(d["Hours"].sum())
         fee = float(d["Fee ($)"].sum())
         with st.expander(f"{ph} — {hrs:,.1f} hrs | {money(fee)}", expanded=False):
             show = d[["Task", "Hours", "Fee ($)"]].copy()
             show["Fee ($)"] = show["Fee ($)"].apply(lambda v: money(float(v)))
             st.dataframe(show, use_container_width=True, hide_index=True)
-
     st.divider()
     st.markdown(f"### MECHANICAL TOTAL\n**{float(m_df['Hours'].sum()):,.1f} hrs** | **{money(float(m_df['Fee ($)'].sum()))}**")
-
-# =========================================================
-# Exports + Assumptions
-# =========================================================
-st.divider()
-st.subheader("Exports")
-
-# Combined export
-combined = pd.concat([
-    e_df.assign(Discipline="Electrical"),
-    pf_df.assign(Discipline="Plumbing/Fire"),
-    m_df.assign(Discipline="Mechanical"),
-], ignore_index=True)[["Discipline", "Phase", "Task", "Hours", "Fee ($)"]]
-
-st.download_button(
-    "Download Combined Work Plan CSV",
-    data=combined.to_csv(index=False),
-    file_name="mep_work_plan_combined.csv",
-    mime="text/csv",
-)
-
-cA, cB, cC = st.columns(3)
-with cA:
-    st.download_button("Download Electrical CSV", data=e_df.to_csv(index=False), file_name="electrical_work_plan.csv", mime="text/csv")
-with cB:
-    st.download_button("Download Plumbing/Fire CSV", data=pf_df.to_csv(index=False), file_name="plumbing_fire_work_plan.csv", mime="text/csv")
-with cC:
-    st.download_button("Download Mechanical CSV", data=m_df.to_csv(index=False), file_name="mechanical_work_plan.csv", mime="text/csv")
-
-with st.expander("Assumptions Used"):
-    st.write(f"- MEP Fee Source: **Area-Based Calculator** = {money(area_mep_fee)}")
-    st.write(f"- Billing Rate: **{money(billing_rate)}/hr** (Base {money(st.session_state['base_raw_rate'])}/hr × {st.session_state['multiplier']:.2f})")
-    st.write(f"- Phase Split (normalized internally): {st.session_state['phase_split']}")
-    st.write(f"- Discipline %: Electrical {st.session_state['electrical_pct']:.1f}%, Plumbing/Fire {st.session_state['plumbing_fire_pct']:.1f}%, Mechanical {st.session_state['mechanical_pct']:.1f}%")
-    st.write(f"- Plumbing/Fire carveout: Fire Protection = 10% of Plumbing/Fire fee")
-    st.write(f"- Plumbing Inputs: Podium={st.session_state['podium']}, Luxury units={st.session_state['lux_units']}, Typical units={st.session_state['typ_units']}, Domestic units={st.session_state['dom_units']}")
-
