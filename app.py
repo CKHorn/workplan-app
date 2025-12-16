@@ -1,6 +1,6 @@
 # ============================================================
 # MEP Fee and Work Plan Generator
-# FINAL STABLE VERSION + % TOTAL INDICATORS
+# FINAL STABLE VERSION + % TOTAL INDICATORS + TAG TOGGLES
 # ============================================================
 
 import streamlit as st
@@ -22,8 +22,8 @@ def normalize_pct_dict(d):
     vals = {k: max(float(d.get(k, 0.0)), 0.0) for k in d}
     total = sum(vals.values())
     if total <= 0:
-        return {k: 1/len(vals) for k in vals}
-    return {k: v/total for k, v in vals.items()}
+        return {k: 1 / len(vals) for k in vals}
+    return {k: v / total for k, v in vals.items()}
 
 def total_pct_badge(total_pct, label="Total %"):
     ok = abs(float(total_pct) - 100.0) < 0.01
@@ -42,6 +42,36 @@ def total_pct_badge(total_pct, label="Total %"):
     </div>
     """
 
+def parse_tags(tag_str):
+    if tag_str is None:
+        return set()
+    s = str(tag_str).strip()
+    if not s:
+        return set()
+    return {t.strip().lower() for t in s.split(",") if t.strip()}
+
+def apply_tag_toggles(df, toggles):
+    """
+    toggles: dict[tag_lower -> bool include]
+    Rule: if a task has a tag that is set to False => disable it.
+    """
+    out = df.copy()
+    out["Enabled"] = out["Enabled"].astype(bool)
+    out["Tags"] = out.get("Tags", "").fillna("").astype(str)
+
+    def allowed(row):
+        if not bool(row["Enabled"]):
+            return False
+        tags = parse_tags(row["Tags"])
+        for tag, include in toggles.items():
+            if (tag in tags) and (include is False):
+                return False
+        return True
+
+    out["__keep__"] = out.apply(allowed, axis=1)
+    out = out[out["__keep__"]].drop(columns=["__keep__"])
+    return out
+
 def build_plan_from_library(task_df, target_fee, billing_rate, phase_split):
     # WEIGHTS MODE: BaseHours are weights within each phase
     phase_frac = normalize_pct_dict(phase_split)
@@ -49,7 +79,7 @@ def build_plan_from_library(task_df, target_fee, billing_rate, phase_split):
     df = task_df.copy()
     df = df[df["Enabled"]].copy()
     if df.empty:
-        return pd.DataFrame([{"Phase":"SD","Task":"No tasks enabled","Hours":0,"Fee ($)":0}])
+        return pd.DataFrame([{"Phase": "SD", "Task": "No tasks enabled", "Hours": 0, "Fee ($)": 0}])
 
     df["BaseHours"] = pd.to_numeric(df["BaseHours"], errors="coerce").fillna(0)
 
@@ -66,9 +96,9 @@ def build_plan_from_library(task_df, target_fee, billing_rate, phase_split):
         w_sum = p["BaseHours"].sum()
         p["Hours"] = (p["BaseHours"] / w_sum) * phase_hours if w_sum > 0 else 0
         p["Fee ($)"] = p["Hours"] * billing_rate
-        rows.append(p[["Phase","Task","Hours","Fee ($)"]])
+        rows.append(p[["Phase", "Task", "Hours", "Fee ($)"]])
 
-    out = pd.concat(rows, ignore_index=True) if rows else pd.DataFrame(columns=["Phase","Task","Hours","Fee ($)"])
+    out = pd.concat(rows, ignore_index=True) if rows else pd.DataFrame(columns=["Phase", "Task", "Hours", "Fee ($)"])
     if not out.empty:
         out["Hours"] = out["Hours"].round(1)
         out["Fee ($)"] = out["Fee ($)"].round(0)
@@ -133,44 +163,45 @@ def recalc_area_df(df):
     return df
 
 # ============================================================
-# Task Libraries (same “detail level” as your saved version)
+# Task Libraries (same structure, now with Tags)
 # ============================================================
 def electrical_defaults_df():
     tasks = [
-        ("SD","PM / Coordination",30),
-        ("SD","Design / Analysis",70),
-        ("DD","PM / Coordination",40),
-        ("DD","Plans / Schedules",120),
-        ("CD","PM / QAQC",50),
-        ("CD","Construction Documents",180),
-        ("Bidding","Bidding Support",10),
-        ("CA","Construction Administration",120),
+        ("SD", "PM / Coordination", 30, "pm,coordination,meetings"),
+        ("SD", "Design / Analysis", 70, "analysis,life_safety,ev"),
+        ("DD", "PM / Coordination", 40, "pm,coordination,meetings"),
+        ("DD", "Plans / Schedules", 120, "plans,schedules,life_safety,ev"),
+        ("CD", "PM / QAQC", 50, "pm,qaqc,coordination,meetings"),
+        ("CD", "Construction Documents", 180, "cd_docs,permitting,life_safety,ev"),
+        ("Bidding", "Bidding Support", 10, "bidding"),
+        ("CA", "Construction Administration", 120, "ca,coordination,meetings"),
     ]
-    df = pd.DataFrame(tasks, columns=["Phase","Task","BaseHours"])
+    df = pd.DataFrame(tasks, columns=["Phase", "Task", "BaseHours", "Tags"])
     df["Enabled"] = True
     return df
 
 def plumbing_defaults_df():
     tasks = [
-        ("SD","Sizing / Coordination",80),
-        ("DD","Layouts / Coordination",140),
-        ("CD","Details / Isometrics",200),
-        ("Bidding","Bidding Support",10),
-        ("CA","Construction Administration",120),
+        ("SD", "Sizing / Coordination", 80, "coordination,meetings,podium"),
+        ("DD", "Layouts / Coordination", 140, "coordination,meetings,podium"),
+        ("CD", "Details / Isometrics", 200, "details,isometrics,grease,garage"),
+        ("Bidding", "Bidding Support", 10, "bidding"),
+        ("CA", "Construction Administration", 120, "ca,coordination,meetings"),
     ]
-    df = pd.DataFrame(tasks, columns=["Phase","Task","BaseHours"])
+    df = pd.DataFrame(tasks, columns=["Phase", "Task", "BaseHours", "Tags"])
     df["Enabled"] = True
     return df
 
 def mechanical_defaults_df():
+    # Pre-tagged so your new toggles work immediately.
     tasks = [
-        ("SD","Preliminary Design",55),
-        ("DD","System Design / Modeling",198),
-        ("CD","Detailed Design",134),
-        ("Bidding","Bidding / CPS",55),
-        ("CA","Construction Administration",60),
+        ("SD", "Preliminary Design", 55, "ductwork,oa_calcs,ies_loads,coordination,meetings"),
+        ("DD", "System Design / Modeling", 198, "ductwork,oa_calcs,ies_loads,chilled_water,condenser_water,refrigerant_piping,coordination,meetings"),
+        ("CD", "Detailed Design", 134, "ductwork,chilled_water,condenser_water,refrigerant_piping,smoke_control,coordination,meetings,permitting"),
+        ("Bidding", "Bidding / CPS", 55, "bidding,coordination"),
+        ("CA", "Construction Administration", 60, "ca,coordination,meetings"),
     ]
-    df = pd.DataFrame(tasks, columns=["Phase","Task","BaseHours"])
+    df = pd.DataFrame(tasks, columns=["Phase", "Task", "BaseHours", "Tags"])
     df["Enabled"] = True
     return df
 
@@ -183,12 +214,12 @@ st.title("MEP Fee and Work Plan Generator")
 # ---------------- Session State ----------------
 if "area_df" not in st.session_state:
     st.session_state.area_df = pd.DataFrame([
-        new_space_row("Amenity Areas","Amenities",18000),
-        new_space_row("BOH Rooms","Back of House",14000),
-        new_space_row("Retail (Core & Shell Restaurant)","Retail",5000),
-        new_space_row("Office (Core & Shell)","Office",4500),
-        new_space_row("Parking (Enclosed)","Parking",80000),
-        new_space_row("Multifamily (High Rise)","Residential",175000),
+        new_space_row("Amenity Areas", "Amenities", 18000),
+        new_space_row("BOH Rooms", "Back of House", 14000),
+        new_space_row("Retail (Core & Shell Restaurant)", "Retail", 5000),
+        new_space_row("Office (Core & Shell)", "Office", 4500),
+        new_space_row("Parking (Enclosed)", "Parking", 80000),
+        new_space_row("Multifamily (High Rise)", "Residential", 175000),
     ])
 
 if "construction_cost_psf" not in st.session_state:
@@ -196,11 +227,9 @@ if "construction_cost_psf" not in st.session_state:
 if "arch_fee_pct" not in st.session_state:
     st.session_state.arch_fee_pct = 3.5
 
-# Phase split (now editable + validation)
 if "phase_split" not in st.session_state:
-    st.session_state.phase_split = {"SD":12.0,"DD":40.0,"CD":28.0,"Bidding":1.5,"CA":18.5}
+    st.session_state.phase_split = {"SD": 12.0, "DD": 40.0, "CD": 28.0, "Bidding": 1.5, "CA": 18.5}
 
-# Discipline % split (now editable + validation; no auto-balance)
 if "electrical_pct" not in st.session_state:
     st.session_state.electrical_pct = 28.0
 if "plumbing_pct" not in st.session_state:
@@ -220,7 +249,7 @@ if "plumbing_lib" not in st.session_state:
 if "mechanical_lib" not in st.session_state:
     st.session_state.mechanical_lib = mechanical_defaults_df()
 
-# Sidebar rate inputs (unchanged)
+# Sidebar rate inputs
 with st.sidebar:
     st.header("Rate Inputs")
     st.session_state.base_raw_rate = st.number_input("Base Raw Rate ($/hr)", min_value=0.0, value=float(st.session_state.base_raw_rate), step=1.0)
@@ -240,13 +269,9 @@ c1, c2, c3 = st.columns(3)
 with c1:
     st.markdown(f"**Total Area**  \n{total_area:,.0f} SF")
 with c2:
-    st.session_state.construction_cost_psf = st.number_input(
-        "Construction Cost ($/SF)", value=float(st.session_state.construction_cost_psf), step=5.0
-    )
+    st.session_state.construction_cost_psf = st.number_input("Construction Cost ($/SF)", value=float(st.session_state.construction_cost_psf), step=5.0)
 with c3:
-    st.session_state.arch_fee_pct = st.number_input(
-        "Arch Fee (%)", value=float(st.session_state.arch_fee_pct), step=0.1, format="%.2f"
-    )
+    st.session_state.arch_fee_pct = st.number_input("Arch Fee (%)", value=float(st.session_state.arch_fee_pct), step=0.1, format="%.2f")
 
 construction_cost_total = total_area * float(st.session_state.construction_cost_psf)
 arch_fee_total = construction_cost_total * (float(st.session_state.arch_fee_pct) / 100.0)
@@ -285,7 +310,7 @@ with pcols[5]:
 st.session_state.phase_split = ps
 
 # ============================================================
-# Discipline % of MEP Fee (no auto-balance; Total % indicator)
+# Discipline % of MEP Fee (Total % indicator)
 # ============================================================
 st.subheader("Discipline % of MEP Fee")
 
@@ -299,7 +324,7 @@ with dcols[3]:
     st.markdown(total_pct_badge(disc_total, "Total %"), unsafe_allow_html=True)
 
 # ============================================================
-# Area-Based Fee Calculator
+# Design Fee Summary / Area-Based Fee Calculator
 # ============================================================
 st.subheader("Area-Based MEP Fee Calculator")
 
@@ -334,19 +359,96 @@ with s2:
 st.caption(f"Billing Rate Used: {money(billing_rate)}/hr (Base {money(st.session_state.base_raw_rate)}/hr × {st.session_state.multiplier:.2f})")
 
 # ============================================================
+# NEW: Scope Toggles (Common + Discipline-specific)
+# ============================================================
+st.divider()
+st.subheader("Scope Toggles (applies across phases via Tags)")
+
+# Common toggles (apply across all disciplines)
+st.markdown("#### Common Toggles")
+ct1, ct2, ct3, ct4, ct5, ct6 = st.columns(6)
+include_pm = ct1.checkbox("PM", value=True)
+include_qaqc = ct2.checkbox("QA/QC", value=True)
+include_coord = ct3.checkbox("Coordination", value=True)
+include_meetings = ct4.checkbox("Meetings", value=True)
+include_narr = ct5.checkbox("Narrative", value=True)
+include_permitting = ct6.checkbox("Permitting", value=True)
+
+# Electrical toggles
+st.markdown("#### Electrical Toggles")
+et1, et2, et3 = st.columns(3)
+include_ev = et1.checkbox("EV", value=True)
+include_life = et2.checkbox("Life Safety", value=True)
+include_e_permit = et3.checkbox("Permitting (Elec)", value=True)
+
+# Plumbing/Fire toggles
+st.markdown("#### Plumbing / Fire Toggles")
+pt1, pt2, pt3 = st.columns(3)
+include_podium = pt1.checkbox("Podium", value=True)
+include_grease = pt2.checkbox("Grease", value=True)
+include_garage = pt3.checkbox("Garage Drainage", value=True)
+
+# Mechanical toggles (your requested list)
+st.markdown("#### Mechanical Toggles")
+mt1, mt2, mt3, mt4, mt5, mt6, mt7 = st.columns(7)
+include_duct = mt1.checkbox("Ductwork", value=True)
+include_ref = mt2.checkbox("Refrigerant Piping", value=False)
+include_smoke = mt3.checkbox("Smoke Control", value=False)
+include_chw = mt4.checkbox("Chilled Water", value=False)
+include_cw = mt5.checkbox("Condenser Water", value=False)
+include_ies = mt6.checkbox("IES Loads", value=False)
+include_oa = mt7.checkbox("OA Calcs", value=True)
+
+# Build tag toggle map (tag names must match your Tags values)
+common_tag_toggles = {
+    "pm": include_pm,
+    "qaqc": include_qaqc,
+    "coordination": include_coord,
+    "meetings": include_meetings,
+    "narrative": include_narr,
+    "permitting": include_permitting,
+}
+elec_tag_toggles = {
+    "ev": include_ev,
+    "life_safety": include_life,
+    # keep permitting separate if you want it separately controlled for elec:
+    "permitting": include_e_permit and include_permitting,
+}
+plumb_tag_toggles = {
+    "podium": include_podium,
+    "grease": include_grease,
+    "garage": include_garage,
+}
+mech_tag_toggles = {
+    "ductwork": include_duct,
+    "refrigerant_piping": include_ref,
+    "smoke_control": include_smoke,
+    "chilled_water": include_chw,
+    "condenser_water": include_cw,
+    "ies_loads": include_ies,
+    "oa_calcs": include_oa,
+}
+
+# ============================================================
 # Work Plan Generator
 # ============================================================
 st.divider()
 st.subheader("Work Plan Generator")
 
-# Discipline fees (even if totals aren't 100, we still compute based on given %s)
+# Discipline fees (based on given %s)
 elec_fee = mep_fee * float(st.session_state.electrical_pct) / 100.0
 plumb_fee = mep_fee * float(st.session_state.plumbing_pct) / 100.0
 mech_fee = mep_fee * float(st.session_state.mechanical_pct) / 100.0
 
-e_plan = build_plan_from_library(st.session_state.electrical_lib, elec_fee, billing_rate, st.session_state.phase_split)
-p_plan = build_plan_from_library(st.session_state.plumbing_lib, plumb_fee, billing_rate, st.session_state.phase_split)
-m_plan = build_plan_from_library(st.session_state.mechanical_lib, mech_fee, billing_rate, st.session_state.phase_split)
+# Apply tag filters: common + discipline-specific
+elec_filtered = apply_tag_toggles(st.session_state.electrical_lib, {**common_tag_toggles, **elec_tag_toggles})
+plumb_filtered = apply_tag_toggles(st.session_state.plumbing_lib, {**common_tag_toggles, **plumb_tag_toggles})
+mech_filtered = apply_tag_toggles(st.session_state.mechanical_lib, {**common_tag_toggles, **mech_tag_toggles})
+
+# Build plans
+e_plan = build_plan_from_library(elec_filtered, elec_fee, billing_rate, st.session_state.phase_split)
+p_plan = build_plan_from_library(plumb_filtered, plumb_fee, billing_rate, st.session_state.phase_split)
+m_plan = build_plan_from_library(mech_filtered, mech_fee, billing_rate, st.session_state.phase_split)
 
 def render(title, df):
     st.subheader(title)
@@ -360,7 +462,10 @@ def render(title, df):
             st.dataframe(d, use_container_width=True, hide_index=True)
 
     st.divider()
-    st.markdown(f"**TOTAL:** {float(df['Hours'].sum()):,.1f} hrs | {money(float(df['Fee ($)'].sum()))}")
+    if not df.empty:
+        st.markdown(f"**TOTAL:** {float(df['Hours'].sum()):,.1f} hrs | {money(float(df['Fee ($)'].sum()))}")
+    else:
+        st.markdown("**TOTAL:** 0.0 hrs | $0")
 
 col1, col2, col3 = st.columns(3)
 with col1:
@@ -369,3 +474,56 @@ with col2:
     render("Plumbing / Fire", p_plan)
 with col3:
     render("Mechanical", m_plan)
+
+# ============================================================
+# Task Library Editors (optional but recommended for tuning tags)
+# ============================================================
+st.divider()
+st.subheader("Task Libraries (adjust weights, enable/disable, and tags)")
+
+tab1, tab2, tab3 = st.tabs(["Electrical Tasks", "Plumbing/Fire Tasks", "Mechanical Tasks"])
+
+with tab1:
+    st.session_state.electrical_lib = st.data_editor(
+        st.session_state.electrical_lib,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Phase": st.column_config.TextColumn(disabled=True),
+            "Task": st.column_config.TextColumn(disabled=True),
+            "BaseHours": st.column_config.NumberColumn(min_value=0.0, step=1.0),
+            "Tags": st.column_config.TextColumn(help="Comma-separated tags, e.g. pm,coordination,ev"),
+            "Enabled": st.column_config.CheckboxColumn(),
+        },
+        key="elec_lib_editor",
+    )
+
+with tab2:
+    st.session_state.plumbing_lib = st.data_editor(
+        st.session_state.plumbing_lib,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Phase": st.column_config.TextColumn(disabled=True),
+            "Task": st.column_config.TextColumn(disabled=True),
+            "BaseHours": st.column_config.NumberColumn(min_value=0.0, step=1.0),
+            "Tags": st.column_config.TextColumn(help="Comma-separated tags, e.g. podium,grease,garage"),
+            "Enabled": st.column_config.CheckboxColumn(),
+        },
+        key="plumb_lib_editor",
+    )
+
+with tab3:
+    st.session_state.mechanical_lib = st.data_editor(
+        st.session_state.mechanical_lib,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Phase": st.column_config.TextColumn(disabled=True),
+            "Task": st.column_config.TextColumn(disabled=True),
+            "BaseHours": st.column_config.NumberColumn(min_value=0.0, step=1.0),
+            "Tags": st.column_config.TextColumn(help="Comma-separated tags, e.g. ductwork,oa_calcs,ies_loads"),
+            "Enabled": st.column_config.CheckboxColumn(),
+        },
+        key="mech_lib_editor",
+    )
