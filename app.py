@@ -22,11 +22,6 @@ def parse_currency(text: str) -> float:
     return float(digits)
 
 def build_plan(rows, target_fee: float, rate: float, phase_split: dict) -> pd.DataFrame:
-    """
-    rows: list of tuples (Phase, Task, BaseHours)
-    Allocates target_fee into phases using phase_split (normalized),
-    then distributes each phase's hours across tasks proportional to BaseHours.
-    """
     phase_split_n = normalize(phase_split)
     df = pd.DataFrame(rows, columns=["Phase", "Task", "Base"])
 
@@ -51,7 +46,7 @@ def build_plan(rows, target_fee: float, rate: float, phase_split: dict) -> pd.Da
     return out_df
 
 # =========================================================
-# $/SF Lookup (from your image)
+# $/SF Lookup
 # =========================================================
 RATE_LOOKUP = {
     "Office (Fitout / Renovation)": 1.50,
@@ -67,7 +62,7 @@ RATE_LOOKUP = {
     "Parking (Enclosed)": 0.45,
     "Multifamily (Garden Style)": 0.85,
     "Multifamily (High Rise)": 1.01,
-    # these typically require override
+    # typically override
     "Site Lighting": None,
     "Site Parking": None,
     "BOH Rooms": 0.75,
@@ -79,24 +74,39 @@ RATE_LOOKUP = {
 }
 SPACE_TYPES = list(RATE_LOOKUP.keys())
 
-def new_space_row():
+def new_space_row(space_type=None, space_name="", area=0, mult=1.0):
+    if space_type is None:
+        space_type = SPACE_TYPES[0]
     return {
         "Delete?": False,
         "Override $/SF?": False,
-        "Space Name": "",
-        "Space Type": SPACE_TYPES[0],
-        "Area (SF)": 0,
+        "Space Name": space_name,
+        "Space Type": space_type,
+        "Area (SF)": area,
         "$/SF": 0.0,
-        "Multiplier": 1.00,
+        "Multiplier": mult,
         "Total Cost": 0.0,
         "Notes": "",
     }
+
+def build_default_area_df():
+    # Different example space types (your request)
+    examples = [
+        ("Amenity Areas", "Amenities", 18000, 1.00),
+        ("BOH Rooms", "Back of House", 14000, 1.00),
+        ("Retail (Core & Shell Restaurant)", "Commercial / Retail", 5000, 1.00),
+        ("Office (Core & Shell)", "Office", 4500, 1.00),
+        ("Parking (Enclosed)", "Parking", 80000, 1.00),
+        ("Multifamily (High Rise)", "Residential", 175000, 1.00),
+        ("Restaurant (Kitchen / Dining Areas)", "Restaurant", 3000, 1.00),
+        ("Site Lighting", "Site Lighting (override)", 0, 1.00),
+    ]
+    return pd.DataFrame([new_space_row(t, n, a, m) for t, n, a, m in examples])
 
 # =========================================================
 # Work plan task lists (Electrical / Plumbing+Fire / Mechanical)
 # =========================================================
 ELECTRICAL = [
-    # SD
     ("SD", "PM: kickoff meetings / coordination", 10),
     ("SD", "PM: schedule tracking", 6),
     ("SD", "PM: client coordination (SD)", 8),
@@ -113,7 +123,6 @@ ELECTRICAL = [
     ("SD", "Basis of Design narrative", 12),
     ("SD", "SD review & revisions", 10),
 
-    # DD
     ("DD", "PM: client coordination (DD)", 8),
     ("DD", "PM: discipline coordination (DD)", 8),
     ("DD", "PM: internal design reviews (DD)", 6),
@@ -130,7 +139,6 @@ ELECTRICAL = [
     ("DD", "Code compliance review", 8),
     ("DD", "DD review & revisions", 14),
 
-    # CD (+ permitting in CD)
     ("CD", "PM: issue management / meetings (CD)", 10),
     ("CD", "PM: fee & scope tracking (CD)", 6),
     ("CD", "Final unit power plans", 36),
@@ -152,13 +160,11 @@ ELECTRICAL = [
     ("CD", "Drawing revisions (permit comments)", 12),
     ("CD", "AHJ coordination", 4),
 
-    # Bidding
     ("Bidding", "Contractor RFIs", 16),
     ("Bidding", "Addenda", 14),
     ("Bidding", "VE reviews", 8),
     ("Bidding", "Bid evaluation support", 8),
 
-    # CA
     ("CA", "PM: CA coordination & reporting", 12),
     ("CA", "Submittal reviews", 34),
     ("CA", "Shop drawings", 20),
@@ -170,7 +176,6 @@ ELECTRICAL = [
 ]
 
 PLUMBING_BASE = [
-    # SD
     ("SD", "SAN/VENT - Initial Sizing", 3, None),
     ("SD", "SAN/VENT - Civil Coordination", 9, None),
     ("SD", "SAN/VENT - Luxury Amenity", 9, None),
@@ -181,7 +186,6 @@ PLUMBING_BASE = [
     ("SD", "Domestic - Initial Sizing", 4, None),
     ("SD", "Domestic - Pump Sizing", 4, None),
 
-    # DD
     ("DD", "SAN/VENT - Potential Equipment Sizing", 18, None),
     ("DD", "STORM - Riser Coordination Luxury", 5, None),
     ("DD", "STORM - Offsets", 4, None),
@@ -193,7 +197,6 @@ PLUMBING_BASE = [
     ("DD", "Domestic - Top Level distribution", 10, None),
     ("DD", "Domestic - Unit Distribution (2 hr/unit)", 50, "dom_units_2hr"),
 
-    # CD
     ("CD", "SAN/VENT - In building Collections", 54, None),
     ("CD", "SAN/VENT - Ground Level Collections", 9, None),
     ("CD", "SAN/VENT - Underground Collections", 18, None),
@@ -209,7 +212,6 @@ PLUMBING_BASE = [
     ("CD", "Garage Drainage - Isometric", 18, None),
     ("CD", "Misc/Details/Schedules", 18, None),
 
-    # Bidding / CA placeholders
     ("Bidding", "Bidding support (Plumbing)", 10, None),
     ("CA", "Submittals / RFIs / site support (Plumbing)", 60, None),
 ]
@@ -219,7 +221,6 @@ def build_plumbing_rows(podium: bool, lux_units: int, typ_units: int, dom_units:
     for phase, task, hrs, tag in PLUMBING_BASE:
         if tag == "podium_only" and not podium:
             continue
-
         base_hrs = float(hrs)
         if tag == "lux_units_4hr":
             base_hrs = float(lux_units) * 4.0
@@ -227,19 +228,16 @@ def build_plumbing_rows(podium: bool, lux_units: int, typ_units: int, dom_units:
             base_hrs = float(typ_units) * 4.0
         elif tag == "dom_units_2hr":
             base_hrs = float(dom_units) * 2.0
-
         rows.append((phase, task, base_hrs))
     return rows
 
 MECHANICAL = [
-    # SD (55)
     ("SD", "Meetings", 12),
     ("SD", "Preliminary load calcs", 18),
     ("SD", "Preliminary sizing/routing", 15),
     ("SD", "SD Narrative", 8),
     ("SD", "QA/QC", 2),
 
-    # DD (198)
     ("DD", "Meetings", 20),
     ("DD", "Load calcs", 20),
     ("DD", "Coordination", 10),
@@ -250,7 +248,6 @@ MECHANICAL = [
     ("DD", "Amenity space modeling", 40),
     ("DD", "QA/QC", 8),
 
-    # CD (134)
     ("CD", "Meetings", 16),
     ("CD", "Coordination", 10),
     ("CD", "Equipment selection", 10),
@@ -260,60 +257,73 @@ MECHANICAL = [
     ("CD", "Amenity space modeling", 20),
     ("CD", "QA/QC", 8),
 
-    # Bidding/CPS (55)
     ("Bidding", "Meetings", 25),
     ("Bidding", "Coordination", 10),
     ("Bidding", "RFI/Submittals", 20),
 
-    # CA placeholder
     ("CA", "CA Support (submittals/RFIs/site)", 60),
 ]
 
 # =========================================================
-# App
+# APP
 # =========================================================
 st.set_page_config(page_title="MEP Fee and Work Plan Generator", layout="wide")
 st.title("MEP Fee and Work Plan Generator")
 
-# -----------------------------
-# Sidebar (only global inputs)
-# -----------------------------
+# Sidebar: keep global inputs
 with st.sidebar:
-    st.header("Context Inputs")
-    cost_raw = st.text_input("Construction Cost ($) (optional reference)", "10,000,000")
-    try:
-        construction_cost = parse_currency(cost_raw)
-    except Exception:
-        construction_cost = 0.0
-
-    st.divider()
     st.header("Rate Inputs")
     base_raw_rate = st.number_input("Base Raw Rate ($/hr)", min_value=0.0, value=56.0, step=1.0)
     multiplier = st.number_input("Multiplier", min_value=0.0, value=3.6, step=0.1, format="%.2f")
     billing_rate = base_raw_rate * multiplier
 
-# =========================================================
-# 1) AREA-BASED MEP FEE CALCULATOR
-# =========================================================
-st.subheader("Area-Based Fee Calculator (Drives MEP Fee)")
+# Phase split
+st.subheader("Design Phase Fee % Split")
+p1, p2, p3, p4, p5 = st.columns(5)
+sd_pct = p1.number_input("SD (%)", min_value=0.0, value=12.0, step=0.5, format="%.1f")
+dd_pct = p2.number_input("DD (%)", min_value=0.0, value=40.0, step=0.5, format="%.1f")
+cd_pct = p3.number_input("CD (%)", min_value=0.0, value=28.0, step=0.5, format="%.1f")
+bid_pct = p4.number_input("Bidding (%)", min_value=0.0, value=1.5, step=0.1, format="%.1f")
+ca_pct = p5.number_input("CA (%)", min_value=0.0, value=18.5, step=0.5, format="%.1f")
+phase_split = {"SD": sd_pct, "DD": dd_pct, "CD": cd_pct, "Bidding": bid_pct, "CA": ca_pct}
+st.caption("Phase split auto-normalizes to 100% if entries don’t add to 100.")
 
+# Discipline splits
+st.subheader("Discipline % of MEP Fee")
+d1, d2, d3 = st.columns(3)
+with d1:
+    electrical_pct = st.number_input("Electrical (%)", min_value=0.0, value=28.0, step=0.5, format="%.1f")
+with d2:
+    plumbing_fire_pct = st.number_input("Plumbing / Fire (%)", min_value=0.0, value=24.0, step=0.5, format="%.1f")
+with d3:
+    mechanical_pct = st.number_input("Mechanical (%)", min_value=0.0, value=48.0, step=0.5, format="%.1f")
+
+# Fee summary (MEP fee comes from area calculator below; show placeholder for now)
+st.subheader("Design Fee Summary")
+
+# We'll compute MEP fee after the area table; initialize here.
 if "area_df" not in st.session_state:
-    st.session_state.area_df = pd.DataFrame([new_space_row() for _ in range(8)])
+    st.session_state.area_df = build_default_area_df()
 
-c1, c2, c3 = st.columns([1, 1, 2])
-with c1:
+# -----------------------------
+# AREA CALCULATOR (MOVED HERE under Fee Summary)
+# -----------------------------
+st.markdown("#### Area-Based Fee Calculator (Drives MEP Fee)")
+
+ctrl1, ctrl2, ctrl3 = st.columns([1, 1, 2])
+with ctrl1:
     if st.button("➕ Add Row"):
         st.session_state.area_df = pd.concat(
-            [st.session_state.area_df, pd.DataFrame([new_space_row()])],
+            [st.session_state.area_df, pd.DataFrame([new_space_row(space_type=SPACE_TYPES[min(1, len(SPACE_TYPES)-1)])])],
             ignore_index=True,
         )
-with c2:
+with ctrl2:
     if st.button("🗑️ Delete Checked Rows"):
         df_del = st.session_state.area_df.copy()
         df_del = df_del[df_del["Delete?"] != True].reset_index(drop=True)
         st.session_state.area_df = df_del
-with c3:
-    st.caption("Override $/SF? unchecked = use lookup. Checked = you type the $/SF.")
+with ctrl3:
+    st.caption("Override $/SF? unchecked = lookup. Checked = type your own $/SF.")
 
 # Compute autofill + totals (pre-editor)
 df = st.session_state.area_df.copy()
@@ -353,7 +363,7 @@ edited = st.data_editor(
     key="area_editor",
 )
 
-# Re-apply lookup after edits so manual $/SF only sticks when override checked
+# Re-apply lookup after edits
 df2 = edited.copy()
 for col in ["Area (SF)", "$/SF", "Multiplier"]:
     df2[col] = pd.to_numeric(df2[col], errors="coerce").fillna(0.0)
@@ -375,11 +385,7 @@ st.session_state.area_df = df2
 
 area_mep_fee = float(df2["Total Cost"].sum())
 
-st.divider()
-st.markdown(f"### Area-Based MEP Fee\n**{money(area_mep_fee)}**")
-if construction_cost > 0:
-    st.caption(f"Reference: Construction Cost = {money(construction_cost)} (not used in fee calc)")
-
+st.markdown(f"**Area-Based MEP Fee:** {money(area_mep_fee)}")
 if missing_defaults:
     st.warning(
         "Some Space Types require override because no default $/SF exists: "
@@ -392,68 +398,39 @@ with st.expander("View $/SF Lookup Table"):
     )
     st.dataframe(lookup_df, use_container_width=True, hide_index=True)
 
-# =========================================================
-# 2) WORK PLAN GENERATOR (USES AREA-BASED MEP FEE)
-# =========================================================
-st.divider()
-st.subheader("Work Plan Generator (Uses Area-Based MEP Fee)")
-
-# Phase split
-st.subheader("Design Phase Fee % Split")
-p1, p2, p3, p4, p5 = st.columns(5)
-sd_pct = p1.number_input("SD (%)", min_value=0.0, value=12.0, step=0.5, format="%.1f")
-dd_pct = p2.number_input("DD (%)", min_value=0.0, value=40.0, step=0.5, format="%.1f")
-cd_pct = p3.number_input("CD (%)", min_value=0.0, value=28.0, step=0.5, format="%.1f")
-bid_pct = p4.number_input("Bidding (%)", min_value=0.0, value=1.5, step=0.1, format="%.1f")
-ca_pct = p5.number_input("CA (%)", min_value=0.0, value=18.5, step=0.5, format="%.1f")
-phase_split = {"SD": sd_pct, "DD": dd_pct, "CD": cd_pct, "Bidding": bid_pct, "CA": ca_pct}
-st.caption("Phase split auto-normalizes to 100% if entries don’t add to 100.")
-
-# Discipline split of MEP fee
-st.subheader("Discipline % of MEP Fee (Area-Based)")
-d1, d2, d3 = st.columns(3)
-with d1:
-    electrical_pct = st.number_input("Electrical (%)", min_value=0.0, value=28.0, step=0.5, format="%.1f")
-with d2:
-    plumbing_fire_pct = st.number_input("Plumbing / Fire (%)", min_value=0.0, value=24.0, step=0.5, format="%.1f")
-with d3:
-    mechanical_pct = st.number_input("Mechanical (%)", min_value=0.0, value=48.0, step=0.5, format="%.1f")
-
-# Derived target fees (MEP fee is area_mep_fee)
+# -----------------------------
+# Finish Fee Summary using computed area_mep_fee
+# -----------------------------
 electrical_target_fee = area_mep_fee * (electrical_pct / 100.0)
 plumbing_fire_target_fee = area_mep_fee * (plumbing_fire_pct / 100.0)
 mechanical_target_fee = area_mep_fee * (mechanical_pct / 100.0)
 
-# Plumbing/Fire carveout
 fire_fee = plumbing_fire_target_fee * 0.10
 plumbing_fee = plumbing_fire_target_fee - fire_fee
 
-# Summary (no st.metric)
-st.subheader("Design Fee Summary")
-s1, s2, s3, s4, s5 = st.columns(5)
-with s1:
-    st.markdown("**MEP Fee (Area-Based)**")
-    st.write(money(area_mep_fee))
-with s2:
-    st.markdown(f"**Electrical ({electrical_pct:.1f}%)**")
-    st.write(money(electrical_target_fee))
-with s3:
-    st.markdown(f"**Plumbing/Fire ({plumbing_fire_pct:.1f}%)**")
-    st.write(money(plumbing_fire_target_fee))
-with s4:
-    st.markdown("**Fire Protection (10% of P/F)**")
-    st.write(money(fire_fee))
-with s5:
-    st.markdown(f"**Mechanical ({mechanical_pct:.1f}%)**")
-    st.write(money(mechanical_target_fee))
+sum1, sum2, sum3, sum4, sum5 = st.columns(5)
+with sum1:
+    st.markdown("**MEP Fee (Area-Based)**"); st.write(money(area_mep_fee))
+with sum2:
+    st.markdown(f"**Electrical ({electrical_pct:.1f}%)**"); st.write(money(electrical_target_fee))
+with sum3:
+    st.markdown(f"**Plumbing/Fire ({plumbing_fire_pct:.1f}%)**"); st.write(money(plumbing_fire_target_fee))
+with sum4:
+    st.markdown("**Fire Protection (10% of P/F)**"); st.write(money(fire_fee))
+with sum5:
+    st.markdown(f"**Mechanical ({mechanical_pct:.1f}%)**"); st.write(money(mechanical_target_fee))
 
 st.write(f"**Billing Rate Used:** {money(billing_rate)}/hr (Base {money(base_raw_rate)}/hr × {multiplier:.2f})")
 
-# Build discipline plans
+# =========================================================
+# WORK PLANS
+# =========================================================
+st.divider()
+st.subheader("Work Plan Generator")
+
 e_df = build_plan(ELECTRICAL, electrical_target_fee, billing_rate, phase_split)
 m_df = build_plan(MECHANICAL, mechanical_target_fee, billing_rate, phase_split)
 
-# Plumbing/Fire inputs under section (compact)
 col_e, col_pf, col_m = st.columns(3)
 
 with col_e:
