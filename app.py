@@ -8,8 +8,7 @@ def pct(x: float) -> float:
     return x / 100.0
 
 # -------------------------------------------------------
-# Template: PM is included INSIDE SD/DD/CD/CA phases
-# (Edit tasks/hours anytime)
+# Template: PM included inside SD/DD/CD/CA phases
 # -------------------------------------------------------
 TEMPLATE = [
     # SD (includes PM)
@@ -74,6 +73,9 @@ def main():
     st.set_page_config(page_title="Electrical Work Plan Generator", layout="wide")
     st.title("Electrical Work Plan Generator — Hours & Fees")
 
+    # -----------------------------
+    # Sidebar inputs
+    # -----------------------------
     with st.sidebar:
         st.header("Inputs (cascading)")
 
@@ -111,43 +113,58 @@ def main():
 
         st.divider()
         st.header("Rate inputs (used to scale hours)")
-
         standard_rate = st.number_input("Standard Rate ($/hr)", min_value=0.0, value=150.0, step=5.0)
         multiplier = st.number_input("Multiplier", min_value=0.0, value=1.0, step=0.05, format="%.2f")
         billing_rate = standard_rate * multiplier
 
-    # Cascading fee calcs
+    # -----------------------------
+    # Fee cascade calculations
+    # -----------------------------
     arch_fee_dollars = construction_cost * pct(arch_fee_pct)
     mep_fee_dollars = arch_fee_dollars * pct(mep_fee_pct)
     electrical_target_fee = mep_fee_dollars * pct(electrical_fee_pct)
 
-    # Header summary
+    # -----------------------------
+    # Summary (no st.metric to avoid JS module error)
+    # -----------------------------
     st.subheader("Fee Cascade Summary")
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Construction Cost", money(construction_cost))
-    c2.metric("Arch Fee ($)", money(arch_fee_dollars))
-    c3.metric("MEP Fee ($)", money(mep_fee_dollars))
-    c4.metric("Electrical Target Fee ($)", money(electrical_target_fee))
+
+    with c1:
+        st.markdown("**Construction Cost**")
+        st.write(money(construction_cost))
+
+    with c2:
+        st.markdown("**Arch Fee ($)**")
+        st.write(money(arch_fee_dollars))
+
+    with c3:
+        st.markdown("**MEP Fee ($)**")
+        st.write(money(mep_fee_dollars))
+
+    with c4:
+        st.markdown("**Electrical Target Fee ($)**")
+        st.write(money(electrical_target_fee))
 
     st.write(f"**Billing Rate Used:** {money(billing_rate)}/hr")
 
-    # Build base df
+    # -----------------------------
+    # Build & scale workplan
+    # -----------------------------
     df = pd.DataFrame(TEMPLATE, columns=["Phase", "Task", "Base Hours"])
     df["Hours"] = df["Base Hours"].astype(float)
 
-    # Scale hours to match Electrical Target Fee
     base_total_hours = float(df["Hours"].sum())
     base_total_fee = base_total_hours * billing_rate
 
-    if billing_rate <= 0:
+    if billing_rate <= 0 or base_total_fee <= 0:
         scale = 0.0
     else:
-        scale = (electrical_target_fee / base_total_fee) if base_total_fee > 0 else 0.0
+        scale = electrical_target_fee / base_total_fee
 
     df["Hours"] = (df["Hours"] * scale).round(1)
     df["Fee ($)"] = (df["Hours"] * billing_rate).round(0)
 
-    # Totals
     total_hours = float(df["Hours"].sum())
     total_fee = float(df["Fee ($)"].sum())
 
@@ -156,17 +173,18 @@ def main():
         f"(Base total fee @ billing rate was {money(base_total_fee)}; scaled to {money(electrical_target_fee)})"
     )
 
+    # -----------------------------
+    # Phase dropdowns (expanders)
+    # -----------------------------
     st.divider()
     st.subheader("Electrical Detailed Task Plan — Hours & Fees (by Phase)")
 
-    # Show phases as dropdown expanders
     for phase in df["Phase"].unique():
         phase_df = df[df["Phase"] == phase][["Task", "Hours", "Fee ($)"]].copy()
-
         phase_hours = float(phase_df["Hours"].sum())
         phase_fee = float(phase_df["Fee ($)"].sum())
 
-        with st.expander(f"{phase}  —  {phase_hours:,.1f} hrs  |  {money(phase_fee)}", expanded=False):
+        with st.expander(f"{phase} — {phase_hours:,.1f} hrs | {money(phase_fee)}", expanded=False):
             pretty = phase_df.copy()
             pretty["Fee ($)"] = pretty["Fee ($)"].apply(lambda v: money(float(v)))
             st.dataframe(pretty, use_container_width=True, hide_index=True)
@@ -174,30 +192,31 @@ def main():
     st.divider()
     st.markdown(f"### TOTAL LABOR\n**{total_hours:,.1f} hrs**  |  **{money(total_fee)}**")
 
+    # -----------------------------
     # Downloads
+    # -----------------------------
     st.divider()
     col1, col2 = st.columns(2)
 
     with col1:
-        csv = df[["Phase", "Task", "Hours", "Fee ($)"]].to_csv(index=False)
+        csv_tasks = df[["Phase", "Task", "Hours", "Fee ($)"]].to_csv(index=False)
         st.download_button(
             "Download CSV (tasks)",
-            data=csv,
+            data=csv_tasks,
             file_name="electrical_work_plan_tasks.csv",
             mime="text/csv",
         )
 
     with col2:
-        # Phase summary export
         phase_summary = (
             df.groupby("Phase", as_index=False)[["Hours", "Fee ($)"]]
               .sum()
               .rename(columns={"Hours": "Phase Hours", "Fee ($)": "Phase Fee ($)"})
         )
-        phase_csv = phase_summary.to_csv(index=False)
+        csv_phase = phase_summary.to_csv(index=False)
         st.download_button(
             "Download CSV (phase summary)",
-            data=phase_csv,
+            data=csv_phase,
             file_name="electrical_work_plan_phase_summary.csv",
             mime="text/csv",
         )
