@@ -476,43 +476,140 @@ st.subheader("Design Fee Summary")
 # =========================================================
 # Area-Based Fee Calculator (UNDER summary)
 # =========================================================
+def recalc_area_df(df_in: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    df = df_in.copy()
+
+    # Ensure columns exist
+    required_cols = ["Delete?", "Override $/SF?", "Space Name", "Space Type", "Area (SF)", "$/SF", "Total Cost", "Notes"]
+    for c in required_cols:
+        if c not in df.columns:
+            df[c] = "" if c in ["Space Name", "Space Type", "Notes"] else 0
+
+    # Clean numeric
+    df["Area (SF)"] = pd.to_numeric(df["Area (SF)"], errors="coerce").fillna(0.0)
+    df["$/SF"] = pd.to_numeric(df["$/SF"], errors="coerce").fillna(0.0)
+
+    missing_defaults = []
+    for i, row in df.iterrows():
+        stype = row.get("Space Type", "")
+        override = bool(row.get("Override $/SF?", False))
+        lookup = RATE_LOOKUP.get(stype)
+
+        if not override:
+            if lookup is None:
+                df.loc[i, "$/SF"] = 0.0
+                if stype:
+                    missing_defaults.append(stype)
+            else:
+                df.loc[i, "$/SF"] = float(lookup)
+
+    # Total = Area × $/SF
+    df["Total Cost"] = df["Area (SF)"] * df["$/SF"]
+    return df, missing_defaults
+
+
+def style_preview(df: pd.DataFrame) -> pd.io.formats.style.Styler:
+    """
+    Read-only preview styling:
+    - Input columns lightly tinted
+    - Computed column (Total Cost) tinted differently
+    - Missing required inputs highlighted (Area=0 or $/SF=0 when needed)
+    """
+    input_cols = ["Space Name", "Space Type", "Area (SF)", "Override $/SF?", "$/SF", "Notes"]
+    computed_cols = ["Total Cost"]
+
+    def _cell_style(val, col):
+        # basic tints
+        if col in computed_cols:
+            return "background-color: #F3F4F6;"  # light gray
+        if col in input_cols:
+            return "background-color: #ECFDF5;"  # very light green
+        return ""
+
+    def _row_style(row):
+        styles = []
+        stype = str(row.get("Space Type", ""))
+        override = bool(row.get("Override $/SF?", False))
+        area = float(row.get("Area (SF)", 0.0))
+        psf = float(row.get("$/SF", 0.0))
+
+        # Required-input checks
+        missing_area = area <= 0
+        # If lookup is None and override is false, $/SF will be 0 -> that's a "needs override"
+        lookup = RATE_LOOKUP.get(stype)
+        needs_override = (lookup is None) and (not override)
+        missing_psf = (psf <= 0) and (override or lookup is not None)
+
+        for col in row.index:
+            base = _cell_style(row[col], col)
+
+            # highlight missing area cell
+            if col == "Area (SF)" and missing_area:
+                styles.append(base + "border: 2px solid #EF4444;")  # red border
+                continue
+
+            # highlight needs override / missing $/sf
+            if col == "$/SF" and (needs_override or missing_psf):
+                styles.append(base + "border: 2px solid #EF4444;")  # red border
+                continue
+
+            styles.append(base)
+        return styles
+
+    preview = df.copy()
+    preview["$/SF"] = preview["$/SF"].map(lambda x: round(float(x), 2))
+    preview["Total Cost"] = preview["Total Cost"].map(lambda x: round(float(x), 0))
+
+    styler = preview.style.apply(_row_style, axis=1)
+
+    # Pretty formatting
+    styler = styler.format({
+        "Area (SF)": "{:,.0f}",
+        "$/SF": "{:,.2f}",
+        "Total Cost": "${:,.0f}",
+    })
+
+    return styler
+
+
+# -----------------------------
+# Area-Based Fee Calculator (auto-updating + styled preview)
+# -----------------------------
 st.markdown("#### Area-Based Fee Calculator (Drives MEP Fee)")
 c1, c2, c3 = st.columns([1, 1, 2])
+
+def _area_editor_changed():
+    # Called whenever data_editor changes; recompute + store
+    df_cur = st.session_state["area_editor"]
+    df_new, _ = recalc_area_df(df_cur)
+    st.session_state["area_df"] = df_new
+
 with c1:
     if st.button("➕ Add Row"):
-        st.session_state["area_df"] = pd.concat([st.session_state["area_df"], pd.DataFrame([new_space_row(space_type=SPACE_TYPES[0])])], ignore_index=True)
+        st.session_state["area_df"] = pd.concat(
+            [st.session_state["area_df"], pd.DataFrame([new_space_row(space_type=SPACE_TYPES[0])])],
+            ignore_index=True,
+        )
+        st.session_state["area_df"], _ = recalc_area_df(st.session_state["area_df"])
+
 with c2:
     if st.button("🗑️ Delete Checked Rows"):
         df_del = st.session_state["area_df"].copy()
         df_del = df_del[df_del["Delete?"] != True].reset_index(drop=True)
-        st.session_state["area_df"] = df_del
+        st.session_state["area_df"], _ = recalc_area_df(df_del)
+
 with c3:
-    st.caption("$/SF auto-fills from Space Type unless Override $/SF? is checked.")
+    st.caption("Inputs are tinted green. Calculated cells are gray. Red borders mean missing required inputs.")
 
-# Pre-calc
-df = st.session_state["area_df"].copy()
-df["Area (SF)"] = pd.to_numeric(df["Area (SF)"], errors="coerce").fillna(0.0)
-df["$/SF"] = pd.to_numeric(df["$/SF"], errors="coerce").fillna(0.0)
-
-missing_defaults = []
-for i, row in df.iterrows():
-    stype = row["Space Type"]
-    override = bool(row["Override $/SF?"])
-    lookup = RATE_LOOKUP.get(stype)
-    if not override:
-        if lookup is None:
-            df.loc[i, "$/SF"] = 0.0
-            missing_defaults.append(stype)
-        else:
-            df.loc[i, "$/SF"] = float(lookup)
-
-df["Total Cost"] = df["Area (SF)"] * df["$/SF"]
-st.session_state["area_df"] = df
+# Recalc before showing editor (ensures latest)
+st.session_state["area_df"], missing_defaults = recalc_area_df(st.session_state["area_df"])
 
 edited = st.data_editor(
     st.session_state["area_df"],
     use_container_width=True,
     hide_index=True,
+    key="area_editor",
+    on_change=_area_editor_changed,
     column_config={
         "Delete?": st.column_config.CheckboxColumn(width="small"),
         "Override $/SF?": st.column_config.CheckboxColumn(width="small"),
@@ -523,30 +620,12 @@ edited = st.data_editor(
         "Total Cost": st.column_config.NumberColumn(format="%.0f", disabled=True, width="small"),
         "Notes": st.column_config.TextColumn(width="large"),
     },
-    key="area_editor",
 )
 
-# Re-apply auto-fill after edits
-df2 = edited.copy()
-df2["Area (SF)"] = pd.to_numeric(df2["Area (SF)"], errors="coerce").fillna(0.0)
-df2["$/SF"] = pd.to_numeric(df2["$/SF"], errors="coerce").fillna(0.0)
+# Ensure we store the latest edit too (some Streamlit versions need this)
+st.session_state["area_df"], missing_defaults = recalc_area_df(edited)
 
-missing_defaults = []
-for i, row in df2.iterrows():
-    stype = row["Space Type"]
-    override = bool(row["Override $/SF?"])
-    lookup = RATE_LOOKUP.get(stype)
-    if not override:
-        if lookup is None:
-            df2.loc[i, "$/SF"] = 0.0
-            missing_defaults.append(stype)
-        else:
-            df2.loc[i, "$/SF"] = float(lookup)
-
-df2["Total Cost"] = df2["Area (SF)"] * df2["$/SF"]
-st.session_state["area_df"] = df2
-
-area_mep_fee = float(df2["Total Cost"].sum())
+area_mep_fee = float(st.session_state["area_df"]["Total Cost"].sum())
 st.markdown(f"**Area-Based MEP Fee:** {money(area_mep_fee)}")
 
 if missing_defaults:
@@ -555,9 +634,10 @@ if missing_defaults:
         + ", ".join(sorted(set(missing_defaults)))
     )
 
-with st.expander("View $/SF Lookup Table"):
-    lookup_df = pd.DataFrame([{"Space Type": k, "$/SF": ("" if v is None else v)} for k, v in RATE_LOOKUP.items()])
-    st.dataframe(lookup_df, use_container_width=True, hide_index=True)
+# Styled preview (read-only) to clearly differentiate input vs computed + missing inputs
+st.markdown("##### Styled Preview (Read Only)")
+st.dataframe(style_preview(st.session_state["area_df"]), use_container_width=True)
+
 
 # =========================================================
 # Fee split results (uses area_mep_fee)
@@ -663,3 +743,4 @@ with col_m:
             st.dataframe(show, use_container_width=True, hide_index=True)
     st.divider()
     st.markdown(f"### MECHANICAL TOTAL\n**{float(m_df['Hours'].sum()):,.1f} hrs** | **{money(float(m_df['Fee ($)'].sum()))}**")
+
