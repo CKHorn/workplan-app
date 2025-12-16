@@ -79,12 +79,19 @@ def main():
     with st.sidebar:
         st.header("Construction and % Design Fee Inputs")
 
-        construction_cost = st.number_input(
-            "Construction Cost ($)",
-            min_value=0.0,
-            value=10_000_000.0,
-            step=100_000.0,
-        )
+construction_cost_str = st.text_input(
+    "Construction Cost ($)",
+    value="10,000,000",
+    help="Enter total construction cost (commas allowed, no decimals)."
+)
+
+# Parse input safely
+try:
+    construction_cost = float(construction_cost_str.replace(",", ""))
+except ValueError:
+    construction_cost = 0.0
+    st.warning("Please enter a valid construction cost (numbers and commas only).")
+
 
         arch_fee_pct = st.number_input(
             "Architectural Fee (%)",
@@ -209,3 +216,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
