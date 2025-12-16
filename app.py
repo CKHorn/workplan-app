@@ -1,3 +1,4 @@
+import re
 import streamlit as st
 import pandas as pd
 
@@ -6,6 +7,26 @@ def money(x: float) -> str:
 
 def pct(x: float) -> float:
     return x / 100.0
+
+def parse_currency_int(text: str) -> int:
+    """
+    Parses user-entered construction cost text into an integer dollars value.
+    Allows commas, spaces, and a leading '$'. Disallows decimals (they'll be ignored if typed).
+    Examples:
+      "10,000,000" -> 10000000
+      "$2 500 000" -> 2500000
+    """
+    if text is None:
+        return 0
+    cleaned = text.strip()
+    if cleaned == "":
+        return 0
+
+    # Keep digits only (ignore commas, spaces, $, etc.)
+    digits = re.sub(r"[^\d]", "", cleaned)
+    if digits == "":
+        raise ValueError("No digits found")
+    return int(digits)
 
 # -------------------------------------------------------
 # Template: PM included inside SD/DD/CD/CA phases
@@ -79,19 +100,20 @@ def main():
     with st.sidebar:
         st.header("Construction and % Design Fee Inputs")
 
-construction_cost_str = st.text_input(
-    "Construction Cost ($)",
-    value="10,000,000",
-    help="Enter total construction cost (commas allowed, no decimals)."
-)
+        # NOTE: Using text_input so it can DISPLAY commas. number_input cannot.
+        default_cost = "10,000,000"
+        construction_cost_raw = st.text_input(
+            "Construction Cost ($)",
+            value=default_cost,
+            help="Commas allowed. Decimals are ignored.",
+        )
 
-# Parse input safely
-try:
-    construction_cost = float(construction_cost_str.replace(",", ""))
-except ValueError:
-    construction_cost = 0.0
-    st.warning("Please enter a valid construction cost (numbers and commas only).")
-
+        # Parse the text input to an integer dollar amount
+        try:
+            construction_cost = float(parse_currency_int(construction_cost_raw))
+        except ValueError:
+            construction_cost = 0.0
+            st.error("Construction Cost must contain digits (commas and $ are ok).")
 
         arch_fee_pct = st.number_input(
             "Architectural Fee (%)",
@@ -214,6 +236,34 @@ except ValueError:
     st.divider()
     st.markdown(f"### TOTAL LABOR\n**{total_hours:,.1f} hrs**  |  **{money(total_fee)}**")
 
+    # -----------------------------
+    # Downloads
+    # -----------------------------
+    st.divider()
+    col1, col2 = st.columns(2)
+
+    with col1:
+        csv_tasks = df[["Phase", "Task", "Hours", "Fee ($)"]].to_csv(index=False)
+        st.download_button(
+            "Download CSV (tasks)",
+            data=csv_tasks,
+            file_name="electrical_work_plan_tasks.csv",
+            mime="text/csv",
+        )
+
+    with col2:
+        phase_summary = (
+            df.groupby("Phase", as_index=False)[["Hours", "Fee ($)"]]
+              .sum()
+              .rename(columns={"Hours": "Phase Hours", "Fee ($)": "Phase Fee ($)"})
+        )
+        csv_phase = phase_summary.to_csv(index=False)
+        st.download_button(
+            "Download CSV (phase summary)",
+            data=csv_phase,
+            file_name="electrical_work_plan_phase_summary.csv",
+            mime="text/csv",
+        )
+
 if __name__ == "__main__":
     main()
-
